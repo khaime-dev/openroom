@@ -191,6 +191,10 @@ Every setting, in one place. **None of them are needed:** the setup screen asks 
 | `TRUST_PROXY` | No | Docker only | `true` when a proxy you control is the only way in (compose sets it). |
 | `PORT` | No | Docker only | Port inside the container. Default `3000`. |
 
+## Try the live demo
+
+A static demo (sample company, nothing saved, nothing sent) lives in [`demo/`](demo/): click around the investor room and the admin side before you install anything. How to run it and publish it on your own domain: [docs/demo.md](docs/demo.md).
+
 ## Updating
 
 When a new version is out, admins see **"Openroom X is available"** on the Documents and Settings pages, with links to what's new and to these steps. To hear by email too, click **Watch → Custom → Releases** on [github.com/plato15/openroom](https://github.com/plato15/openroom). Updates keep your documents, investors and settings; database changes apply by themselves.
@@ -294,6 +298,7 @@ The suite runs twice: once in the real Workers runtime (Miniflare) and once agai
 | `src/routes/setup.ts` | First-time setup: claim the room with an emailed code, then branding |
 | `src/routes/branding.ts` | The Settings tab: branding and email |
 | `src/settings.ts` | Settings saved in the database: owner, email, who is admin |
+| `demo/` | The static live demo: sample data in `data.js`, no server, no build (see [docs/demo.md](docs/demo.md)) |
 | `src/templates.ts` | Room templates: folders, subfolders and placeholder pages |
 | `src/routes/requests.ts` | Request access from the sign-in page |
 | `src/updates.ts`, `scripts/update-openroom.sh` | "New version available" notice; the Update Openroom workflow's script |
