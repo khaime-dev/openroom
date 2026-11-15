@@ -27,3 +27,4 @@ button.link-btn, button.switch { font: inherit; }
 .demo-table th { background: var(--navy); color: #fff; }
 .demo-pages.frame.pdf, .frame.pdf.demo-pages { display: grid; }
 @media (max-width: 640px) { .demo-page { padding: 22px 18px 54px; min-height: 0; } .demo-page .sample, .demo-page .demo-stamp { left: 18px; right: 18px; } }
+@media (max-width: 640px) { .row-actions { flex-wrap: wrap; justify-content: flex-start; } .file-row .row-actions { grid-column: 1 / -1; } }
