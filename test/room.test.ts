@@ -631,18 +631,19 @@ describe("admin", () => {
     expect(res.headers.get("location")).toContain("m=replaced");
 
     const row = await env.DB.prepare("SELECT id, name, slug, allow_download, published FROM files WHERE id = ?").bind(file).first();
-    expect(row).toMatchObject({ id: file, name: "Model.xlsx", slug, allow_download: 1, published: 1 });
+    // The file takes the name of the file you uploaded; its id, link, download setting and visibility stay.
+    expect(row).toMatchObject({ id: file, name: "Model v2 final.xlsx", slug, allow_download: 1, published: 1 });
     const html = await (await req(`/d/${slug}/view`, { cookie })).text();
     expect(html).toContain("Two");
     expect(html).not.toContain(">One<");
 
-    // Replacing a PowerPoint with its PDF export keeps the name, swaps the extension.
+    // Replacing a PowerPoint with its PDF export takes the new file's name.
     const pptx = await addFile(folder, { name: "Deck.pptx", type: "application/vnd.openxmlformats-officedocument.presentationml.presentation", bytes: new Uint8Array([80, 75, 3, 4]) });
     const fd2 = new FormData();
     fd2.append("file", new File([await makePdf()], "export.pdf"));
     await req(`/admin/files/${pptx}/replace`, { cookie: admin, form: fd2 });
     const after = await env.DB.prepare("SELECT name, content_type FROM files WHERE id = ?").bind(pptx).first();
-    expect(after).toMatchObject({ name: "Deck.pdf", content_type: "application/pdf" });
+    expect(after).toMatchObject({ name: "export.pdf", content_type: "application/pdf" });
   });
 
   it("will not publish a file whose name says draft or internal", async () => {
@@ -1033,6 +1034,96 @@ describe("subfolders, templates and placeholders", () => {
     expect(await headingOf(top)).toBe(topName);
   });
 
+  it("removes a heading once its last file or placeholder is removed, and never before", async () => {
+    const admin = await adminSession();
+    const top = await addFolder();
+    const exists = async (id: string) => !!(await env.DB.prepare("SELECT id FROM folders WHERE id = ?").bind(id).first());
+    const del = (file: string) => req(`/admin/files/${file}/delete`, { cookie: admin, method: "POST" });
+
+    // A heading holding only a placeholder goes with it.
+    const a = await addSubfolder(top);
+    const pa = await addFile(a, { name: "Financial model.pdf" });
+    await env.DB.prepare("UPDATE files SET placeholder = 1, published = 0 WHERE id = ?").bind(pa).run();
+    expect((await del(pa)).headers.get("location")).toContain(`#${top}`);
+    expect(await exists(a)).toBe(false);
+
+    // With two files, removing one leaves the heading.
+    const b = await addSubfolder(top);
+    const f1 = await addFile(b, { name: "One.pdf" });
+    const f2 = await addFile(b, { name: "Two.pdf" });
+    await del(f1);
+    expect(await exists(b)).toBe(true);
+    await del(f2);
+    expect(await exists(b)).toBe(false);
+
+    // A subfolder you add on purpose stays empty until you use it.
+    const c2 = await addSubfolder(top);
+    expect(await exists(c2)).toBe(true);
+
+    // Moving the last file out takes the heading too.
+    const d = await addSubfolder(top);
+    const fd = await addFile(d, { name: "Moves.pdf" });
+    await req(`/admin/files/${fd}`, { cookie: admin, form: { action: "move", folder_id: top } });
+    expect(await exists(d)).toBe(false);
+
+    // A top-level folder is never removed this way.
+    const fe = await addFile(top, { name: "Only.pdf" });
+    await del(fe);
+    expect(await exists(top)).toBe(true);
+  });
+
+  it("saves name, link, folder, visibility and a new file from the Edit panel in one go", async () => {
+    const admin = await adminSession();
+    const top = await addFolder();
+    const other = await addFolder();
+    const id = await addFile(top, { name: "Model.pdf", published: false });
+    const other1 = await addFile(top, { name: "Other.pdf" });
+    await env.DB.prepare("UPDATE files SET slug = 'taken-link' WHERE id = ?").bind(other1).run();
+    const row = async () => (await env.DB.prepare("SELECT name, slug, published, folder_id FROM files WHERE id = ?").bind(id).first()) as { name: string; slug: string | null; published: number; folder_id: string };
+    const save = (fields: Record<string, string>, file?: File) => {
+      const fd = new FormData();
+      for (const [k, v] of Object.entries(fields)) fd.append(k, v);
+      if (file) fd.append("file", file);
+      return req(`/admin/files/${id}/save`, { cookie: admin, form: fd });
+    };
+
+    // Everything together.
+    const ok = await save({ name: "Financial model.pdf", slug: "Fin Model", folder_id: other, published: "on" });
+    expect(ok.headers.get("location")).toContain("m=file_saved");
+    expect(await row()).toEqual({ name: "Financial model.pdf", slug: "fin-model", published: 1, folder_id: other });
+
+    // A taken link is refused and nothing else changes.
+    const refused = await save({ name: "Changed.pdf", slug: "taken-link", folder_id: top, published: "on" });
+    expect(refused.headers.get("location")).toContain("m=slug_taken");
+    expect(await row()).toEqual({ name: "Financial model.pdf", slug: "fin-model", published: 1, folder_id: other });
+
+    // The box left unticked hides it; clearing the link removes it.
+    await save({ name: "Financial model.pdf", slug: "", folder_id: other });
+    expect(await row()).toEqual({ name: "Financial model.pdf", slug: null, published: 0, folder_id: other });
+
+    // A draft-looking name never goes live, even with the box ticked.
+    const internal = await save({ name: "Model DRAFT.pdf", slug: "", folder_id: other, published: "on" });
+    expect(internal.headers.get("location")).toContain("m=file_internal");
+    expect((await row()).published).toBe(0);
+
+    // An optional new file replaces the contents (the extension follows it) without losing the other settings.
+    await save({ name: "Model DRAFT.pdf", slug: "", folder_id: other, published: "on" });
+    const pdf = new File([await makePdf("v2")], "model-v2.pdf");
+    await save({ name: "Model DRAFT.pdf", slug: "kept-link", folder_id: other, published: "on" }, pdf);
+    expect(await row()).toEqual({ name: "model-v2.pdf", slug: "kept-link", published: 1, folder_id: other });
+    // Typing a name wins over the uploaded file's name.
+    await save({ name: "Financial model.pdf", slug: "kept-link", folder_id: other, published: "on" }, new File([await makePdf("v3")], "model-v3.pdf"));
+    expect((await row()).name).toBe("Financial model.pdf");
+
+    // Only an admin, and a bad folder id changes nothing about the folder.
+    const inv = await addInvestor({ folders: [other] });
+    const cookie = await signIn(inv.email);
+    await req(`/admin/files/${id}/save`, { cookie, form: { name: "Hacked.pdf" } });
+    await save({ name: "Financial model.pdf", slug: "kept-link", folder_id: "nope", published: "on" });
+    expect((await row()).folder_id).toBe(other);
+    expect((await row()).name).toBe("Financial model.pdf");
+  });
+
   it("never lets access be granted on a subfolder directly", async () => {
     const admin = await adminSession();
     const sub = await addSubfolder(await addFolder());
@@ -1059,14 +1150,23 @@ describe("subfolders, templates and placeholders", () => {
     expect(await (await req("/room", { cookie })).text()).not.toContain("Pitch deck.pdf");
     await env.DB.prepare("UPDATE files SET published = 0 WHERE id = ?").bind(ph).run();
 
-    // Upload your version: same place and name, now real and visible.
+    // Upload your version: same place, now real and visible, and it keeps the name of the file you uploaded.
     const fd = new FormData();
     fd.append("file", new File([await makePdf("our real deck")], "deck-final.pdf"));
     const res = await req(`/admin/files/${ph}/replace`, { cookie: admin, form: fd });
     expect(res.headers.get("location")).toContain("m=replaced_placeholder");
     const row = await env.DB.prepare("SELECT name, published, placeholder FROM files WHERE id = ?").bind(ph).first();
-    expect(row).toEqual({ name: "Pitch deck.pdf", published: 1, placeholder: 0 });
+    expect(row).toEqual({ name: "deck-final.pdf", published: 1, placeholder: 0 });
     expect((await req(`/d/${ph}`, { cookie })).status).toBe(200);
+    // The heading over it, which was the placeholder's name, follows.
+    expect(await env.DB.prepare("SELECT name FROM folders WHERE id = ?").bind(sub).first()).toEqual({ name: "deck-final" });
+
+    // Replacing it later takes the new file's name too, and the heading follows again.
+    const fd2 = new FormData();
+    fd2.append("file", new File([await makePdf("v2")], "deck-v2.pdf"));
+    await req(`/admin/files/${ph}/replace`, { cookie: admin, form: fd2 });
+    expect(await env.DB.prepare("SELECT name FROM files WHERE id = ?").bind(ph).first()).toEqual({ name: "deck-v2.pdf" });
+    expect(await env.DB.prepare("SELECT name FROM folders WHERE id = ?").bind(sub).first()).toEqual({ name: "deck-v2" });
   });
 
   it("asks before deleting a folder, then deletes it with everything in it", async () => {

@@ -4,6 +4,17 @@ Every change people running a room should know about. Newest first. Versions fol
 
 ## Unreleased
 
+### Added
+- **Uploads keep your file's name.** A file you upload over a placeholder, or as a new version of a document already in the room, takes the name of the file you uploaded (a placeholder used to keep the template's name, like "Bylaws.pdf", and a replaced document kept its old name with the new extension). Its link, access and settings stay, and a heading that was over only that file follows the new name. In the Edit panel, a name you type yourself wins over the uploaded file's name.
+- **A slide-out for editing a document, with one Save.** Click Edit on a file and a panel slides in from the right: a Visible to investors switch, Name, Short link, Folder and an optional new file (the same drop box as uploads), with a single Save changes button. Delete is a quiet red link at the bottom, not a big red button, and still asks before it deletes. Click anywhere outside the panel (or an upload window) to close it.
+- **Drag and drop uploads, in a window.** Click **Upload** under a folder, **Add files** on a heading, or **Upload your version** on a placeholder and an upload window opens in the middle of the page, with a big drop box (drop files on it, or click it to choose), Visible now and Downloadable. Close it with Cancel, the cross, Escape or a click outside. You can also drag a file straight onto a placeholder to replace it, or onto a folder or heading to open its window with the file ready. The separate Choose Files button and the always-visible upload bar are gone.
+
+### Changed
+- **Your place is kept after a change.** After an upload, rename, delete or any other change on the Documents page the screen goes back to where you were, instead of snapping to the top of the folder. The confirmation ("Upload finished. 1 added.") is a message over the page that fades after a few seconds, so it no longer pushes the page down.
+- **"Are you sure?" is a window on the page.** Delete, Remove, Revoke and the other buttons that ask first now show a small window in the page (Cancel first, a modest red Delete or Remove next to it) instead of the browser's own confirm box, which some embedded browsers block, so the button looked dead.
+- **Wider pages, less empty space.** On a desktop the pages now use up to 1440 pixels (they stopped at 960), with 32 pixels at the sides, and the space above and below the content is smaller. Phones are unchanged.
+- **A heading goes when its last file does.** Remove the last file or placeholder under a subfolder heading (or move the last file out) and the empty heading disappears with it, instead of staying behind as "Empty." A subfolder you add yourself stays until you remove it.
+
 ## 0.5.0 (14 Nov 2026)
 
 ### Added

@@ -1,6 +1,6 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { html } from "hono/html";
-import { fileForAdmin, fileRef, orientationFor, renderKey, serveFile, visibleToInvestor } from "../access";
+import { type FileWithFolder, fileForAdmin, fileRef, orientationFor, renderKey, serveFile, visibleToInvestor } from "../access";
 import { documentFrame } from "../views";
 import { brandingRoutes } from "./branding";
 import { isAdmin } from "../auth";
@@ -90,7 +90,8 @@ function flash(c: { req: { query: (k: string) => string | undefined } }) {
     code === "uploaded"
       ? ` ${Number(c.req.query("n") ?? 0)} added${Number(c.req.query("held") ?? 0) ? `, ${Number(c.req.query("held"))} kept hidden (draft or internal name)` : ""}${Number(c.req.query("bad") ?? 0) ? `, ${Number(c.req.query("bad"))} refused (over 50 MB, or a PDF that cannot be watermarked, such as password protected)` : ""}.`
       : "";
-  return m ? notice(m[0], m[1] + extra) : "";
+  // A toast over the page, not a banner in it: it never pushes the page down, and you see it wherever you are.
+  return m ? html`<div class="toast" role="status">${notice(m[0], m[1] + extra)}</div>` : "";
 }
 
 const checked = (on: unknown) => (on ? "checked" : "");
@@ -105,11 +106,11 @@ function investorStatus(i: Investor): [label: string, cls: string] {
 }
 
 /** Optional short link for a file (/deck). Access is still checked on every open, so a readable link gives nothing away. */
-function slugForm(file: FileRow, back?: "file") {
+function slugForm(file: FileRow, back?: "file", titled = true) {
   return html`<form method="post" action="/admin/files/${file.id}" class="stack tight">
     <input type="hidden" name="action" value="slug">
     ${back ? html`<input type="hidden" name="back" value="file">` : ""}
-    <label class="small">Short link
+    <label class="small">${titled ? "Short link" : ""}
       <span class="slug-input"><span class="prefix">/</span><input name="slug" value="${file.slug ?? ""}" maxlength="60" placeholder="${slugify(file.name.replace(/\.[a-z0-9]+$/i, "")) || "pitch-deck"}" autocapitalize="off" spellcheck="false"></span>
     </label>
     <button class="btn small ghost" type="submit">Save link</button>
@@ -133,12 +134,11 @@ function linkChip(slug: string | null, label = "this") {
 }
 
 /** Upload a new version in place: same id, link, folder, visibility, download setting and history. */
-function replaceForm(file: FileRow, back?: "file") {
+function replaceForm(file: FileRow, back?: "file", titled = true) {
   return html`<form method="post" action="/admin/files/${file.id}/replace" enctype="multipart/form-data" class="stack tight">
     ${back ? html`<input type="hidden" name="back" value="file">` : ""}
-    <label class="small">Replace with a new version
-      <input type="file" name="file" required>
-    </label>
+    ${titled ? html`<p class="small field-title">Replace with a new version</p>` : ""}
+    <input type="file" name="file" required aria-label="New version of ${file.name}">
     <button class="btn small" type="submit">Upload new version</button>
   </form>`;
 }
@@ -258,16 +258,15 @@ adminRoutes.get("/admin", async (c) => {
                   <div class="subfolder-head">
                     <h3 class="subfolder-title">${linkChip(sub.slug, sub.name)}${sub.name}</h3>
                     <span class="subfolder-actions">
-                    <details class="menu">
-                      <summary class="link-btn small">Add files</summary>
-                      <div class="menu-body">
-                        <form method="post" action="/admin/folders/${sub.id}/upload" enctype="multipart/form-data" class="stack tight">
-                          <input type="file" name="files" multiple required aria-label="Files to upload to ${sub.name}">
-                          <label class="check small"><input type="checkbox" name="publish" checked> Visible now</label>
-                          <button class="btn small" type="submit">Upload</button>
-                        </form>
-                      </div>
-                    </details>
+                    <button type="button" class="link-btn small" data-upload-open="up-${sub.id}">Add files</button>
+                    <dialog class="upload-dialog" id="up-${sub.id}" aria-label="Add files to ${sub.name}">
+                      <form method="post" action="/admin/folders/${sub.id}/upload" enctype="multipart/form-data" class="upload-form">
+                        <div class="dlg-head"><h3>Add files to ${sub.name}</h3><button type="button" class="dlg-x" data-close aria-label="Close">&times;</button></div>
+                        <input type="file" name="files" multiple required autofocus aria-label="Files to upload to ${sub.name}">
+                        <div class="dlg-options"><label class="check small"><input type="checkbox" name="publish" checked> Visible now</label></div>
+                        <div class="dlg-actions"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn" type="submit">Upload</button></div>
+                      </form>
+                    </dialog>
                     <details class="menu">
                       <summary class="link-btn small">Subfolder</summary>
                       <div class="menu-body stack">
@@ -291,12 +290,18 @@ adminRoutes.get("/admin", async (c) => {
                 </div>`,
               )}
               <div class="folder-foot">
-                <form method="post" action="/admin/folders/${folder.id}/upload" enctype="multipart/form-data" class="upload">
-                  <input type="file" name="files" multiple required aria-label="Files to upload to ${folder.name}">
-                  <label class="check small"><input type="checkbox" name="publish" checked> Visible now</label>
-                  <label class="check small"><input type="checkbox" name="allow_download"> Downloadable</label>
-                  <button class="btn small" type="submit">Upload</button>
-                </form>
+                <button type="button" class="btn small" data-upload-open="up-${folder.id}">Upload</button>
+                <dialog class="upload-dialog" id="up-${folder.id}" aria-label="Upload to ${folder.name}">
+                  <form method="post" action="/admin/folders/${folder.id}/upload" enctype="multipart/form-data" class="upload-form">
+                    <div class="dlg-head"><h3>Upload to ${folder.name}</h3><button type="button" class="dlg-x" data-close aria-label="Close">&times;</button></div>
+                    <input type="file" name="files" multiple required autofocus aria-label="Files to upload to ${folder.name}">
+                    <div class="dlg-options">
+                      <label class="check small"><input type="checkbox" name="publish" checked> Visible now</label>
+                      <label class="check small"><input type="checkbox" name="allow_download"> Downloadable</label>
+                    </div>
+                    <div class="dlg-actions"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn" type="submit">Upload</button></div>
+                  </form>
+                </dialog>
                 <details class="settings">
                   <summary class="link-btn">New subfolder</summary>
                   <div class="settings-body">
@@ -353,9 +358,14 @@ function fileRows(list: FileRow[], folder: Folder, allFolders: Folder[], statsBy
           </span>
           <span class="row-actions">
             <span class="badge amber">To replace</span>
-            <form method="post" action="/admin/files/${file.id}/replace" enctype="multipart/form-data" class="replace-inline">
-              <label class="btn small">Upload your version<input type="file" name="file" required data-autosubmit aria-label="Your version of ${file.name}"></label>
-            </form>
+            <button type="button" class="btn small" data-upload-open="up-${file.id}">Upload your version</button>
+            <dialog class="upload-dialog" id="up-${file.id}" aria-label="Upload your version of ${file.name}">
+              <form method="post" action="/admin/files/${file.id}/replace" enctype="multipart/form-data" class="upload-form">
+                <div class="dlg-head"><h3>Upload your version of ${file.name}</h3><button type="button" class="dlg-x" data-close aria-label="Close">&times;</button></div>
+                <input type="file" name="file" required data-autosubmit autofocus aria-label="Your version of ${file.name}">
+                <div class="dlg-actions"><button type="button" class="btn ghost" data-close>Cancel</button></div>
+              </form>
+            </dialog>
             <form method="post" action="/admin/files/${file.id}/delete" data-confirm="Remove the placeholder ${file.name}?">
               <button class="link-btn small" type="submit">Remove</button>
             </form>
@@ -381,34 +391,50 @@ function fileRows(list: FileRow[], folder: Folder, allFolders: Folder[], statsBy
           ${downloadSwitch(file)}
           <span class="badge ${file.published ? "green" : "grey"}">${file.published ? "Visible" : "Hidden"}</span>
           <a class="link-btn" href="/admin/preview/f/${file.id}">Preview</a>
-          <details class="menu">
-            <summary class="link-btn">Edit</summary>
-            <div class="menu-body stack">
-              <form method="post" action="/admin/files/${file.id}">
-                <input type="hidden" name="action" value="${file.published ? "hide" : "publish"}">
-                <button class="btn small wide ${file.published ? "ghost" : ""}" type="submit">${file.published ? "Hide from investors" : "Make visible"}</button>
-              </form>
-              <form method="post" action="/admin/files/${file.id}" class="inline-form">
-                <input type="hidden" name="action" value="rename">
-                <input name="name" value="${file.name}" maxlength="160" aria-label="File name">
-                <button class="btn small ghost" type="submit">Rename</button>
-              </form>
-              ${slugForm(file)}
-              ${replaceForm(file)}
-              ${allFolders.length > 1
-                ? html`<form method="post" action="/admin/files/${file.id}" class="inline-form">
-                    <input type="hidden" name="action" value="move">
-                    <select name="folder_id" aria-label="Move to folder">
-                      ${allFolders.map((f) => html`<option value="${f.id}" ${f.id === folder.id ? "selected" : ""}>${folderLabel(f, allFolders)}</option>`)}
-                    </select>
-                    <button class="btn small ghost" type="submit">Move</button>
-                  </form>`
-                : ""}
-              <form method="post" action="/admin/files/${file.id}/delete" data-confirm="Delete ${file.name}? This cannot be undone.">
-                <button class="btn small danger wide" type="submit">Delete file</button>
-              </form>
-            </div>
-          </details>
+          <button type="button" class="link-btn" data-upload-open="ed-${file.id}">Edit</button>
+          <dialog class="drawer" id="ed-${file.id}" aria-label="Edit ${file.name}" autofocus>
+            <form method="post" action="/admin/files/${file.id}/save" enctype="multipart/form-data" class="drawer-form">
+              <div class="drawer-head">
+                <div><p class="small muted">Edit document</p><h3>${file.name}</h3></div>
+                <button type="button" class="dlg-x" data-close aria-label="Close">&times;</button>
+              </div>
+              <div class="drawer-body">
+                <section class="drawer-sec">
+                  <label class="toggle">
+                    <input type="checkbox" name="published" ${file.published ? "checked" : ""}>
+                    <span class="track" aria-hidden="true"></span>
+                    <span>Visible to investors<small>Only people with access to this folder can see it.</small></span>
+                  </label>
+                </section>
+                <section class="drawer-sec">
+                  <h4>Name</h4>
+                  <input name="name" value="${file.name}" maxlength="160" aria-label="File name">
+                </section>
+                <section class="drawer-sec">
+                  <h4>Short link</h4>
+                  <span class="slug-input"><span class="prefix">/</span><input name="slug" value="${file.slug ?? ""}" maxlength="60" placeholder="${slugify(file.name.replace(/\.[a-z0-9]+$/i, "")) || "pitch-deck"}" autocapitalize="off" spellcheck="false" aria-label="Short link"></span>
+                </section>
+                ${allFolders.length > 1
+                  ? html`<section class="drawer-sec">
+                      <h4>Folder</h4>
+                      <select name="folder_id" aria-label="Folder">
+                        ${allFolders.map((f) => html`<option value="${f.id}" ${f.id === folder.id ? "selected" : ""}>${folderLabel(f, allFolders)}</option>`)}
+                      </select>
+                    </section>`
+                  : ""}
+                <section class="drawer-sec">
+                  <h4>Replace the file</h4>
+                  <p class="small muted">Optional. Keeps the link, access and settings. Investors see the new date.</p>
+                  <input type="file" name="file" aria-label="New version of ${file.name}">
+                </section>
+              </div>
+              <div class="drawer-foot">
+                <button type="submit" form="del-${file.id}" class="danger-link">Delete&hellip;</button>
+                <span class="foot-right"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn" type="submit">Save changes</button></span>
+              </div>
+            </form>
+            <form id="del-${file.id}" method="post" action="/admin/files/${file.id}/delete" data-confirm="Delete ${file.name}? This cannot be undone."></form>
+          </dialog>
         </span>
       </li>`;
     })}
@@ -600,6 +626,19 @@ adminRoutes.post("/admin/folders/:id/upload", async (c) => {
   return c.redirect(`/admin?m=uploaded&n=${added}&held=${held}&bad=${bad}#${folder.id}`, 303);
 });
 
+/**
+ * A heading over a single file follows that file's name: rename "More Stuff" to "More Stuffs" and the
+ * heading above it becomes "More Stuffs". With two or more files under it, the heading stays as it is.
+ * (To keep your own wording, rename the heading after the file.)
+ */
+async function headingFollowsFile(c: Parameters<MiddlewareHandler<AppEnv>>[0], folderId: string, fileId: string, name: string): Promise<void> {
+  const sub = await c.env.DB.prepare("SELECT id FROM folders WHERE id = ? AND parent_id IS NOT NULL").bind(folderId).first<{ id: string }>();
+  if (!sub) return;
+  const others = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM files WHERE folder_id = ? AND id != ? AND placeholder = 0").bind(sub.id, fileId).first<{ n: number }>();
+  const heading = name.replace(/\.[A-Za-z0-9]{1,5}$/, "").trim().slice(0, 80);
+  if (!others?.n && heading) await c.env.DB.prepare("UPDATE folders SET name = ? WHERE id = ?").bind(heading, sub.id).run();
+}
+
 adminRoutes.post("/admin/files/:id", async (c) => {
   const file = await c.env.DB.prepare("SELECT * FROM files WHERE id = ?").bind(c.req.param("id")).first<FileRow>();
   if (!file) return c.text("Not found", 404);
@@ -641,26 +680,49 @@ adminRoutes.post("/admin/files/:id", async (c) => {
       const publishedSql = looksInternal(name) ? ", published = 0" : "";
       await c.env.DB.prepare(`UPDATE files SET name = ?${publishedSql} WHERE id = ?`).bind(name, file.id).run();
       await c.env.FILES.delete(renderKey(file.id)); // the rendered page carries the name as its title
-      // A heading over a single file follows that file's name: rename "More Stuff" to "More Stuffs" and the
-      // heading above it becomes "More Stuffs". With two or more files under it, the heading stays as it is.
-      // (To keep your own wording, rename the heading after the file.)
-      const sub = await c.env.DB.prepare("SELECT id FROM folders WHERE id = ? AND parent_id IS NOT NULL").bind(file.folder_id).first<{ id: string }>();
-      if (sub) {
-        const others = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM files WHERE folder_id = ? AND id != ? AND placeholder = 0").bind(sub.id, file.id).first<{ n: number }>();
-        const heading = name.replace(/\.[A-Za-z0-9]{1,5}$/, "").trim().slice(0, 80);
-        if (!others?.n && heading) await c.env.DB.prepare("UPDATE folders SET name = ? WHERE id = ?").bind(heading, sub.id).run();
-      }
+      await headingFollowsFile(c, file.folder_id, file.id, name);
       break;
     }
     case "move": {
       const target = await c.env.DB.prepare("SELECT id FROM folders WHERE id = ?").bind(str(form.folder_id)).first();
       if (target) await c.env.DB.prepare("UPDATE files SET folder_id = ? WHERE id = ?").bind(target.id, file.id).run();
-      return c.redirect(`/admin?m=file_saved#${target?.id ?? file.folder_id}`, 303);
+      const shown = target && target.id !== file.folder_id ? await dropEmptyHeading(c, file.folder_id) : file.folder_id;
+      return c.redirect(`/admin?m=file_saved#${target?.id ?? shown}`, 303);
     }
   }
   if (form.back === "file") return c.redirect(`/admin/files/${file.id}?m=file_saved`, 303);
   return c.redirect(`/admin?m=file_saved#${file.folder_id}`, 303);
 });
+
+/** Puts a new file into an existing row: same id, link, folder and settings. "bad" when it cannot be used. */
+async function replaceContents(
+  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+  file: FileWithFolder,
+  upload: File,
+): Promise<"bad" | { name: string; wasPlaceholder: boolean; publish: number }> {
+  if (upload.size > MAX_UPLOAD) return "bad";
+  const bytes = await upload.arrayBuffer();
+  const type = detectContentType(upload.name || file.name, new Uint8Array(bytes.slice(0, 16)));
+  if (type === "application/pdf" && file.watermark && !(await canWatermark(bytes))) return "bad";
+  const orientation = type === "application/pdf" ? await orientationOf(bytes).catch(() => "portrait" as const) : null;
+
+  // The file keeps the name of the file you uploaded, whether it replaces a placeholder or a document
+  // already in the room. Its link, access and settings stay.
+  const wasPlaceholder = file.placeholder === 1;
+  const uploadedName = (upload.name || "").replace(/[\\/\x00-\x1f]/g, "_").trim().slice(0, 160);
+  const name = uploadedName || file.name;
+
+  await c.env.FILES.put(file.r2_key, bytes, { httpMetadata: { contentType: type } });
+  await c.env.FILES.delete(renderKey(file.id));
+  // A template placeholder becomes a real document: visible straight away, unless its name says draft.
+  const publish = wasPlaceholder && !looksInternal(name) ? 1 : file.published;
+  await c.env.DB.prepare(
+    "UPDATE files SET name = ?, content_type = ?, size = ?, orientation = ?, updated_at = ?, placeholder = 0, published = ? WHERE id = ?",
+  )
+    .bind(name, type, upload.size, orientation, now(), publish, file.id)
+    .run();
+  return { name, wasPlaceholder, publish };
+}
 
 adminRoutes.post("/admin/files/:id/replace", async (c) => {
   const file = await fileForAdmin(c.env, c.req.param("id"));
@@ -670,36 +732,85 @@ adminRoutes.post("/admin/files/:id/replace", async (c) => {
   const anchor = form.back === "file" ? "" : `#${file.folder_id}`;
   const upload = form.file;
   if (!(upload instanceof File) || upload.size === 0) return c.redirect(`${back}?m=replace_none${anchor}`, 303);
-  if (upload.size > MAX_UPLOAD) return c.redirect(`${back}?m=replace_bad${anchor}`, 303);
-
-  const bytes = await upload.arrayBuffer();
-  const type = detectContentType(upload.name || file.name, new Uint8Array(bytes.slice(0, 16)));
-  if (type === "application/pdf" && file.watermark && !(await canWatermark(bytes))) return c.redirect(`${back}?m=replace_bad${anchor}`, 303);
-  const orientation = type === "application/pdf" ? await orientationOf(bytes).catch(() => "portrait" as const) : null;
-
-  // Keep the name investors know; only the extension follows the new file (Deck.pptx -> Deck.pdf).
-  const newExt = (upload.name.match(/\.([a-z0-9]{1,5})$/i)?.[1] ?? "").toLowerCase();
-  const name = newExt ? file.name.replace(/\.[a-z0-9]{1,5}$/i, "") + "." + newExt : file.name;
-
-  await c.env.FILES.put(file.r2_key, bytes, { httpMetadata: { contentType: type } });
-  await c.env.FILES.delete(renderKey(file.id));
-  // A template placeholder becomes a real document: visible straight away, unless its name says draft.
-  const wasPlaceholder = file.placeholder === 1;
-  const publish = wasPlaceholder && !looksInternal(name) ? 1 : file.published;
-  await c.env.DB.prepare(
-    "UPDATE files SET name = ?, content_type = ?, size = ?, orientation = ?, updated_at = ?, placeholder = 0, published = ? WHERE id = ?",
-  )
-    .bind(name, type, upload.size, orientation, now(), publish, file.id)
-    .run();
-  return c.redirect(`${back}?m=${wasPlaceholder && publish ? "replaced_placeholder" : "replaced"}${anchor}`, 303);
+  const done = await replaceContents(c, file, upload);
+  if (done === "bad") return c.redirect(`${back}?m=replace_bad${anchor}`, 303);
+  if (done.name !== file.name) await headingFollowsFile(c, file.folder_id, file.id, done.name);
+  return c.redirect(`${back}?m=${done.wasPlaceholder && done.publish ? "replaced_placeholder" : "replaced"}${anchor}`, 303);
 });
+
+/**
+ * The Edit panel's one Save: name, short link, folder, visibility and an optional new file, together.
+ * Anything that can be refused (a taken link, a file that cannot be used) is checked first, so a
+ * refusal changes nothing.
+ */
+adminRoutes.post("/admin/files/:id/save", async (c) => {
+  const file = await fileForAdmin(c.env, c.req.param("id"));
+  if (!file || file.placeholder) return c.redirect("/admin", 303);
+  const form = await c.req.parseBody();
+  const anchor = `#${file.folder_id}`;
+
+  let slug: string | null = file.slug;
+  if (typeof form.slug === "string") {
+    const raw = form.slug.trim();
+    const wanted = raw ? slugify(raw) : null;
+    if (raw && !wanted) return c.redirect(`/admin?m=slug_invalid${anchor}`, 303);
+    if (wanted !== file.slug) {
+      if (wanted) {
+        const check = await checkLink(c.env, wanted, { file: file.id });
+        if (check !== "ok") return c.redirect(`/admin?m=slug_${check}${anchor}`, 303);
+      }
+      slug = wanted;
+    }
+  }
+
+  let current = file.name;
+  const upload = form.file;
+  if (upload instanceof File && upload.size > 0) {
+    const done = await replaceContents(c, file, upload);
+    if (done === "bad") return c.redirect(`/admin?m=replace_bad${anchor}`, 303);
+    current = done.name;
+  }
+
+  const typed = str(form.name, 160).replace(/[\\/\x00-\x1f]/g, "_");
+  const renamed = !!typed && typed !== file.name;
+  const name = renamed ? typed : current;
+  const internal = looksInternal(name);
+  const publish = on(form.published) && !internal ? 1 : 0;
+
+  let folderId = file.folder_id;
+  const target = typeof form.folder_id === "string" && form.folder_id ? await c.env.DB.prepare("SELECT id FROM folders WHERE id = ?").bind(form.folder_id).first<{ id: string }>() : null;
+  if (target) folderId = target.id;
+
+  await c.env.DB.prepare("UPDATE files SET name = ?, slug = ?, published = ?, folder_id = ? WHERE id = ?").bind(name, slug, publish, folderId, file.id).run();
+  if (name !== file.name) await c.env.FILES.delete(renderKey(file.id)); // the rendered page carries the name as its title
+  if (name !== file.name) await headingFollowsFile(c, folderId, file.id, name);
+  if (folderId !== file.folder_id) await dropEmptyHeading(c, file.folder_id);
+  return c.redirect(`/admin?m=${on(form.published) && internal ? "file_internal" : "file_saved"}#${folderId}`, 303);
+});
+
+/**
+ * A heading with nothing left under it goes too: after the last file (or placeholder) leaves a
+ * subfolder, the subfolder is removed. Returns the folder to show next. Only for subfolders, and only
+ * when a file just left, so a subfolder you add on purpose stays until you use it.
+ */
+async function dropEmptyHeading(c: Parameters<MiddlewareHandler<AppEnv>>[0], folderId: string): Promise<string> {
+  const sub = await c.env.DB.prepare("SELECT id, parent_id FROM folders WHERE id = ?").bind(folderId).first<{ id: string; parent_id: string | null }>();
+  if (!sub?.parent_id) return folderId;
+  const left = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM files WHERE folder_id = ?").bind(sub.id).first<{ n: number }>();
+  if (left?.n) return folderId;
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM grants WHERE folder_id = ?").bind(sub.id),
+    c.env.DB.prepare("DELETE FROM folders WHERE id = ?").bind(sub.id),
+  ]);
+  return sub.parent_id;
+}
 
 adminRoutes.post("/admin/files/:id/delete", async (c) => {
   const file = await c.env.DB.prepare("SELECT * FROM files WHERE id = ?").bind(c.req.param("id")).first<FileRow>();
   if (!file) return c.text("Not found", 404);
   await c.env.DB.prepare("DELETE FROM files WHERE id = ?").bind(file.id).run();
   await c.env.FILES.delete([file.r2_key, renderKey(file.id)]);
-  return c.redirect(`/admin?m=file_deleted#${file.folder_id}`, 303);
+  return c.redirect(`/admin?m=file_deleted#${await dropEmptyHeading(c, file.folder_id)}`, 303);
 });
 
 /** Admin viewer: the file on a page inside the room, as investors see it, plus its status and who opened it. */
