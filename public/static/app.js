@@ -1,8 +1,49 @@
-// Ask before destructive admin actions. Kept out of inline HTML so the page can forbid inline scripts.
+// Ask before destructive admin actions, in a small window on the page. (The browser's own confirm box is
+// blocked in some embedded browsers, which made buttons like Delete look dead.) Kept out of inline HTML so
+// the page can forbid inline scripts.
+const confirmed = new WeakSet();
+function askFirst(message, trigger, onYes) {
+  const dlg = document.createElement("dialog");
+  dlg.className = "confirm-dialog";
+  dlg.setAttribute("aria-label", "Please confirm");
+  const text = document.createElement("p");
+  text.textContent = message;
+  const actions = document.createElement("div");
+  actions.className = "confirm-actions";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "btn ghost";
+  cancel.textContent = "Cancel";
+  cancel.autofocus = true;
+  const yes = document.createElement("button");
+  yes.type = "button";
+  yes.className = "btn warn";
+  yes.textContent = (trigger && trigger.textContent ? trigger.textContent.replace(/\u2026|\.\.\./g, "").trim() : "") || "Continue";
+  cancel.addEventListener("click", () => dlg.close());
+  yes.addEventListener("click", () => {
+    dlg.close();
+    onYes();
+  });
+  actions.append(cancel, yes);
+  dlg.append(text, actions);
+  dlg.addEventListener("close", () => dlg.remove());
+  document.body.append(dlg);
+  dlg.showModal();
+}
 document.addEventListener("submit", (e) => {
   const form = e.target;
   const msg = form instanceof HTMLFormElement ? form.dataset.confirm : null;
-  if (msg && !window.confirm(msg)) e.preventDefault();
+  if (form instanceof HTMLFormElement && msg && !confirmed.has(form)) {
+    e.preventDefault();
+    const trigger = e.submitter instanceof HTMLElement ? e.submitter : null;
+    askFirst(msg, trigger, () => {
+      confirmed.add(form);
+      if (trigger) form.requestSubmit(trigger);
+      else form.requestSubmit();
+    });
+    return;
+  }
+  if (form instanceof HTMLFormElement) confirmed.delete(form);
   // One tap only: stop double submits on slow networks.
   if (!e.defaultPrevented && form instanceof HTMLFormElement) {
     if (form.dataset.sent) e.preventDefault();
@@ -109,6 +150,158 @@ document.addEventListener("change", (e) => {
   }
 });
 
+// Drag and drop uploads. Drop a file on a placeholder to replace it, or on a folder or subfolder to
+// fill its Add files form (you then press Upload, so "Visible now" and "Downloadable" stay your call).
+(() => {
+  const isFileDrag = (e) => !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+
+  const fill = (input, files) => {
+    const dt = new DataTransfer();
+    const list = Array.from(files);
+    (input.multiple ? list : list.slice(0, 1)).forEach((f) => dt.items.add(f));
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+
+  // Where a drop at this spot would go: the element to highlight, and the file input to fill.
+  const aim = (t) => {
+    if (!(t instanceof Element)) return null;
+    const dlg = t.closest("dialog");
+    if (dlg) {
+      const input = dlg.querySelector("input[type=file]");
+      return input ? { zone: dlg.querySelector(".dz-box") || dlg, input, open: dlg } : null;
+    }
+    const row = t.closest(".placeholder-row");
+    if (row) {
+      const input = row.querySelector("input[data-autosubmit]");
+      return input ? { zone: row, input, open: null } : null;
+    }
+    const sub = t.closest(".subfolder.admin");
+    if (sub) {
+      const input = sub.querySelector("input[type=file][name=files]");
+      return input ? { zone: sub, input, open: input.closest("details") } : null;
+    }
+    const folder = t.closest("details.folder");
+    if (folder) {
+      const input = folder.querySelector(".folder-foot input[type=file][name=files]");
+      return input ? { zone: folder, input, open: folder } : null;
+    }
+    const holder = t.closest(".drop") || t.closest("form");
+    const input = holder && holder.querySelector("input[type=file]");
+    return input && holder ? { zone: holder, input, open: null } : null;
+  };
+
+  let lit = null;
+  const light = (zone) => {
+    if (lit === zone) return;
+    if (lit) lit.classList.remove("dz-over");
+    lit = zone;
+    if (lit) lit.classList.add("dz-over");
+  };
+
+  document.addEventListener("dragover", (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault(); // otherwise the browser would open the file instead
+    const hit = aim(e.target);
+    e.dataTransfer.dropEffect = hit ? "copy" : "none";
+    light(hit ? hit.zone : null);
+  });
+  document.addEventListener("dragleave", (e) => {
+    if (!e.relatedTarget) light(null);
+  });
+  document.addEventListener("drop", (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    light(null);
+    const files = e.dataTransfer.files;
+    const hit = aim(e.target);
+    if (!hit || !files.length) return;
+    if (hit.open instanceof HTMLDetailsElement) hit.open = true;
+    fill(hit.input, files); // a placeholder's input submits itself on change
+    // Anything else opens its upload window with the files ready, so Visible now stays your call.
+    const dlg = hit.input.closest("dialog");
+    if (dlg && !hit.input.hasAttribute("data-autosubmit") && !dlg.open) dlg.showModal();
+  });
+  document.addEventListener("dragend", () => light(null));
+
+  // The upload window and the Edit slider: opened by their button; closed by Cancel, the cross, Escape,
+  // or a click on the dimmed page around them. (Both press and release must be outside, so selecting
+  // text in a field and letting go outside does not close it.)
+  let pressedOutside = false;
+  document.addEventListener("mousedown", (e) => {
+    pressedOutside = e.target instanceof HTMLDialogElement;
+  });
+  document.addEventListener("click", (e) => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    const opener = t.closest("[data-upload-open]");
+    if (opener instanceof HTMLElement) {
+      const dlg = document.getElementById(opener.dataset.uploadOpen || "");
+      if (dlg instanceof HTMLDialogElement && !dlg.open) dlg.showModal();
+      return;
+    }
+    const closer = t.closest("[data-close]");
+    if (closer) closer.closest("dialog")?.close();
+    else if (t instanceof HTMLDialogElement && pressedOutside) t.close();
+    pressedOutside = false;
+  });
+
+  // Each file chooser becomes one drop box: drag files onto it, or click it to choose. The real
+  // input stays inside (invisible, covering the box), so keyboards and form checks still work.
+  const svg = (d) => {
+    const ns = "http://www.w3.org/2000/svg";
+    const el = document.createElementNS(ns, "svg");
+    el.setAttribute("viewBox", "0 0 24 24");
+    el.setAttribute("width", "18");
+    el.setAttribute("height", "18");
+    el.setAttribute("fill", "none");
+    el.setAttribute("stroke", "currentColor");
+    el.setAttribute("stroke-width", "2");
+    el.setAttribute("stroke-linecap", "round");
+    el.setAttribute("stroke-linejoin", "round");
+    el.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", d);
+    el.append(path);
+    return el;
+  };
+  const span = (cls, text) => {
+    const el = document.createElement("span");
+    if (cls) el.className = cls;
+    if (text) el.textContent = text;
+    return el;
+  };
+  document.querySelectorAll("form input[type=file][name=files], form input[type=file][name=file]").forEach((input) => {
+    const single = !input.multiple;
+    const idleHint = !single ? "PDF, Excel, Word, images or video, up to 50 MB each" : input.hasAttribute("data-autosubmit") ? "One file. It replaces this placeholder." : input.required ? "One file. It replaces the current version." : "Optional. One file. It replaces the current version.";
+    const box = document.createElement("label");
+    box.className = "dz-box";
+    const icon = span("dz-icon");
+    icon.append(svg("M12 16V5m0 0l-4 4m4-4l4 4M5 16v2a1 1 0 001 1h12a1 1 0 001-1v-2"));
+    const text = span("dz-text");
+    const title = document.createElement("strong");
+    const drag = span("dz-drag", single ? "Drag your file here or " : "Drag files here or ");
+    const link = span("dz-link", "click to choose");
+    title.append(drag, link);
+    const hint = span("", idleHint);
+    text.append(title, hint);
+    input.replaceWith(box);
+    box.append(icon, text, input);
+    input.addEventListener("change", () => {
+      const names = input.files ? Array.from(input.files, (f) => f.name) : [];
+      if (!names.length) {
+        title.replaceChildren(drag, link);
+        hint.textContent = idleHint;
+        box.classList.remove("has-files");
+        return;
+      }
+      title.textContent = names.length > 2 ? `${names.length} files: ${names.slice(0, 2).join(", ")}, ...` : names.join(", ");
+      hint.textContent = "Click to change";
+      box.classList.add("has-files");
+    });
+  });
+})();
+
 // Copy a short link: the full address, ready to paste into an email or chat.
 document.addEventListener("click", async (e) => {
   const b = e.target instanceof Element ? e.target.closest("[data-copy]") : null;
@@ -162,3 +355,58 @@ if (folds.length) {
     save();
   });
 }
+
+// Keep your place on the Documents page. After an upload (or any change there) the page reloads; put
+// the screen back on the thing you were using, instead of snapping to the top of its folder.
+(() => {
+  const KEY = "openroom-keep-place";
+  if (location.pathname !== "/admin") return;
+
+  document.addEventListener(
+    "submit",
+    (e) => {
+      const form = e.target;
+      if (!(form instanceof HTMLFormElement) || form.method.toLowerCase() !== "post") return;
+      const dlg = form.closest("dialog");
+      const opener = dlg ? document.querySelector(`[data-upload-open="${dlg.id}"]`) : null;
+      const section = form.closest(".subfolder.admin, details.folder");
+      const mark = (el) => (el ? { top: el.getBoundingClientRect().top } : null);
+      try {
+        sessionStorage.setItem(
+          KEY,
+          JSON.stringify({
+            at: Date.now(),
+            y: window.scrollY,
+            opener: opener ? { key: dlg.id, ...mark(opener) } : null,
+            section: section && section.id ? { key: section.id, ...mark(section) } : null,
+          }),
+        );
+      } catch {
+        /* private mode: the page just loads where the browser puts it */
+      }
+    },
+    true,
+  );
+
+  let saved = null;
+  try {
+    saved = JSON.parse(sessionStorage.getItem(KEY) || "null");
+    sessionStorage.removeItem(KEY);
+  } catch {
+    saved = null;
+  }
+  if (!saved || Date.now() - saved.at > 20000) return;
+  // No jump to the folder's anchor: we put the screen back ourselves.
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+  const put = () => {
+    const byOpener = saved.opener && document.querySelector(`[data-upload-open="${saved.opener.key}"]`);
+    const bySection = saved.section && document.getElementById(saved.section.key);
+    const el = byOpener || bySection;
+    const was = byOpener ? saved.opener.top : bySection ? saved.section.top : null;
+    const y = el && was !== null ? el.getBoundingClientRect().top + window.scrollY - was : saved.y;
+    window.scrollTo(0, Math.max(0, y));
+  };
+  put();
+  requestAnimationFrame(put);
+  window.addEventListener("load", () => requestAnimationFrame(put), { once: true });
+})();
