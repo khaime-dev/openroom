@@ -1,0 +1,29 @@
+/* Demo-only styles. Everything else comes from app.css, copied from the real app (see sync.mjs). */
+:root { --font: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; --display: var(--font); }
+.demo-bar { position: sticky; top: 0; z-index: 50; padding: 8px 16px; background: #ffd23f; color: #0b1b3f; font-size: 14px; font-weight: 600; text-align: center; }
+.demo-bar a { color: #0b1b3f; text-decoration: underline; margin-left: 6px; }
+.demo-choices { display: grid; gap: 24px; }
+@media (min-width: 640px) { .demo-choices { grid-template-columns: 1fr 1fr; } }
+.demo-choices .h3 { margin: 0 0 6px; }
+.brand-name { font-weight: 700; font-size: 17px; }
+button.link-btn, button.switch { font: inherit; }
+.badge.amber, .tag.amber { background: #b86e00; }
+.tag.grey { background: var(--grey); }
+
+/* Sample documents drawn in the page */
+.demo-pages, .demo-sheets { padding: 12px; display: grid; gap: 12px; background: #f4f6fa; }
+.demo-page { position: relative; background: #fff; border: 1px solid var(--line); box-shadow: 0 1px 3px rgba(15, 23, 42, .08); padding: 32px 36px 56px; min-height: 420px; }
+.demo-page.wide { aspect-ratio: 16 / 10; min-height: 0; max-width: 960px; margin: 0 auto; width: 100%; }
+.demo-page h3 { margin: 0 0 14px; font-size: 22px; color: var(--navy); }
+.demo-page p { margin: 0 0 8px; }
+.demo-page p.gap { height: 10px; margin: 0; }
+.demo-page .sample, .demo-stamp { position: absolute; left: 36px; right: 36px; bottom: 14px; font-size: 11px; color: var(--muted); }
+.demo-page .demo-stamp { bottom: 30px; font-weight: 600; color: #8a93a6; }
+.demo-sheets .demo-stamp { position: static; padding: 4px 0 0; font-size: 12px; font-weight: 600; color: #8a93a6; }
+.sheet-name { margin: 8px 0 0; font-size: 14px; color: var(--muted); }
+.table-wrap { overflow-x: auto; background: #fff; border: 1px solid var(--line); }
+.demo-table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.demo-table th, .demo-table td { padding: 8px 12px; border: 1px solid var(--line); text-align: left; white-space: nowrap; }
+.demo-table th { background: var(--navy); color: #fff; }
+.demo-pages.frame.pdf, .frame.pdf.demo-pages { display: grid; }
+@media (max-width: 640px) { .demo-page { padding: 22px 18px 54px; min-height: 0; } .demo-page .sample, .demo-page .demo-stamp { left: 18px; right: 18px; } }
