@@ -86,7 +86,8 @@
         <div><h2 class="h3">See what an investor sees</h2><p class="muted">Folders you were invited to, documents marked with your email, nothing else.</p><button type="button" class="btn wide" data-act="enter" data-id="investor">Enter the demo room</button></div>
         <div><h2 class="h3">See how you run it</h2><p class="muted">Folders, who has access, the activity log and the download switches.</p><button type="button" class="btn wide ghost" data-act="enter" data-id="admin">See the admin side</button></div>
       </section>
-      <p class="small center"><a href="${D.repo}" rel="noopener">Get your own Openroom</a>: free, open source, your documents on your own server.</p>` });
+      <p class="small center"><a href="${D.repo}" rel="noopener">Get your own Openroom</a>: free, open source, your documents on your own server.</p>
+      <p class="small center muted">Found it useful? <a href="coffee">Buy me a coffee</a></p>` });
   }
 
   // The investor screens, shared by the real room and the admin Preview.

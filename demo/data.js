@@ -5,6 +5,8 @@ window.DEMO = {
   legal: "Lumen Harbor, Inc.",
   host: "demo.openroom",
   repo: "https://github.com/plato15/openroom",
+  // Where the Buy me a coffee button goes: the checkout on the Build with Gabe site. Empty shows a friendly "coming soon".
+  coffeeUrl: "https://www.buildwithgabe.io/coffee",
   investorEmail: "demo-investor@example.com",
   adminEmail: "demo-admin@example.com",
 
