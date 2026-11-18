@@ -225,42 +225,58 @@ document.addEventListener("change", (e) => {
   document.addEventListener("dragend", () => light(null));
 
   // Drag a file row onto another folder or subfolder to move it there. (Uploads are the "Files" drags
-  // above; this one carries its own type, so the two never mix.) While you drag, every place the file
-  // can go shows a "Drop here" strip, the one under the pointer lights up, and a folded folder or
+  // above; this one carries its own type, so the two never mix.) While you drag, a gap opens in the list
+  // right where your pointer is, between the files, and that is where it lands. A folded folder or
   // subfolder you hover over opens by itself. Moving to a different top-level folder changes who can
-  // see the file, so that asks first. The file slides into its new place at once, then the page
-  // reloads to refresh the counts, and the file flashes so you can see where it went.
+  // see the file, so that asks first. The file slides into the gap at once, then the page reloads to
+  // refresh the counts (files are kept in name order), and the file flashes so you can see where it went.
   const ROW = "application/x-openroom-file";
   let dragging = null;
-  let over = null;
+  let zone = null; // the folder or subfolder under the pointer, if the file can go there
   let spring = null; // timer: opens a folded folder you are hovering over
   let springOn = null;
+  const gap = document.createElement("li");
+  gap.className = "drop-gap";
+  gap.setAttribute("aria-hidden", "true");
 
-  const slotText = (zone) => `Move to ${zone.dataset.folderName || "this folder"}`;
-  const addSlots = () => {
-    document.body.classList.add("is-moving");
-    for (const zone of document.querySelectorAll("[data-drop-folder]")) {
-      if (zone.dataset.dropFolder === dragging.folder) continue;
-      // A folder's own body is a target for files that go straight into it, which a "Files directly in"
-      // box already shows when there is one.
-      if (zone.classList.contains("folder-body") && zone.querySelector(":scope > .subfolder.loose")) continue;
-      const slot = document.createElement("div");
-      slot.className = "drop-slot";
-      slot.setAttribute("aria-hidden", "true");
-      slot.textContent = slotText(zone) + (zone.classList.contains("folder-body") ? " (not in a subfolder)" : "");
-      const foot = zone.classList.contains("folder-body") ? zone.querySelector(":scope > .folder-foot") : null;
-      zone.insertBefore(slot, foot);
+  const hasSubBoxes = (body) => !!body.querySelector(":scope > .subfolder");
+  // Where a file dropped at this spot would go: a subfolder box, or a folder's own area. A folder that
+  // has subfolders only offers its own area down by its Upload row, so the gap never opens somewhere
+  // other than under the pointer.
+  const zoneAt = (t) => {
+    if (!(t instanceof Element) || !dragging) return null;
+    const z = t.closest("[data-drop-folder]");
+    if (!z || z.dataset.dropFolder === dragging.folder) return null;
+    if (z.classList.contains("folder-body") && hasSubBoxes(z) && !t.closest(".folder-foot")) return null;
+    return z;
+  };
+  const listOf = (z, make) => {
+    let list = z.querySelector(":scope > ul.files");
+    if (!list && make) {
+      list = document.createElement("ul");
+      list.className = "files admin";
+      const empty = z.querySelector(":scope > .empty");
+      if (empty) empty.replaceWith(list);
+      else z.insertBefore(list, z.classList.contains("folder-body") ? z.querySelector(":scope > .folder-foot") : null);
     }
+    return list;
   };
-  const clearSlots = () => {
-    document.body.classList.remove("is-moving");
-    document.querySelectorAll(".drop-slot").forEach((el) => el.remove());
+  const closeGap = () => {
+    gap.remove();
+    // A list made only to hold the gap goes away with it.
+    document.querySelectorAll("ul.files.admin:empty").forEach((u) => u.remove());
   };
-  const lightMove = (zone) => {
-    if (over === zone) return;
-    if (over) over.classList.remove("move-over");
-    over = zone;
-    if (over) over.classList.add("move-over");
+  // Opens the gap between the two files the pointer is between.
+  const moveGap = (z, y) => {
+    if (z.classList.contains("is-collapsed")) return closeGap();
+    const list = listOf(z, true);
+    const rows = [...list.querySelectorAll(":scope > li.file-row")].filter((r) => !r.classList.contains("dragging"));
+    const before = rows.find((r) => {
+      const b = r.getBoundingClientRect();
+      return y < b.top + b.height / 2;
+    });
+    if (gap.parentElement === list && (before ? gap.nextElementSibling === before : gap === list.lastElementChild)) return;
+    list.insertBefore(gap, before || null);
   };
   // Hovering a folded folder or subfolder for a moment opens it, so it can be dropped into.
   const springOpen = (el) => {
@@ -273,10 +289,6 @@ document.addEventListener("change", (e) => {
       else el.classList.remove("is-collapsed");
     }, 450);
   };
-  const moveZone = (t) => {
-    const zone = t instanceof Element ? t.closest("[data-drop-folder]") : null;
-    return zone && dragging && zone.dataset.dropFolder !== dragging.folder ? zone : null;
-  };
   const toast = (text) => {
     const t = document.createElement("div");
     t.className = "toast";
@@ -287,21 +299,6 @@ document.addEventListener("change", (e) => {
     t.append(n);
     document.body.append(t);
     setTimeout(() => t.remove(), 3600);
-  };
-  const slideIn = (row, zone) => {
-    let list = zone.querySelector(":scope > ul.files");
-    if (!list) {
-      list = document.createElement("ul");
-      list.className = "files admin";
-      const empty = zone.querySelector(":scope > .empty");
-      if (empty) empty.replaceWith(list);
-      else zone.insertBefore(list, zone.querySelector(":scope > .drop-slot, :scope > .folder-foot"));
-    }
-    row.dataset.folder = zone.dataset.dropFolder;
-    row.dataset.top = zone.dataset.top;
-    list.append(row);
-    zone.classList.remove("is-collapsed");
-    row.classList.add("just-moved");
   };
 
   document.addEventListener("dragstart", (e) => {
@@ -318,37 +315,46 @@ document.addEventListener("change", (e) => {
     document.body.append(ghost);
     e.dataTransfer.setDragImage(ghost, 18, 18);
     setTimeout(() => ghost.remove(), 0);
-    row.classList.add("dragging");
-    // Added a moment later, so changing the page does not cancel the drag in some browsers.
-    setTimeout(() => dragging && addSlots(), 0);
+    // The row leaves its place a moment later (changing the page at once can cancel the drag).
+    setTimeout(() => row.classList.add("dragging"), 0);
   });
   document.addEventListener("dragover", (e) => {
     if (!dragging || !e.dataTransfer || !Array.from(e.dataTransfer.types).includes(ROW)) return;
-    const zone = moveZone(e.target);
-    if (zone) e.preventDefault();
-    e.dataTransfer.dropEffect = zone ? "move" : "none";
-    lightMove(zone);
+    zone = zoneAt(e.target);
     const t = e.target instanceof Element ? e.target : null;
     const closedFolder = t && t.closest("details.folder:not([open])");
     springOpen(closedFolder || (zone && zone.classList.contains("is-collapsed") ? zone : null));
+    if (!zone) {
+      e.dataTransfer.dropEffect = "none";
+      return closeGap();
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    moveGap(zone, e.clientY);
   });
   document.addEventListener("drop", (e) => {
     if (!dragging || !e.dataTransfer || !Array.from(e.dataTransfer.types).includes(ROW)) return;
-    const zone = moveZone(e.target);
+    const z = zoneAt(e.target) || zone;
     const file = dragging;
-    lightMove(null);
-    if (!zone) return;
+    if (!z) return;
     e.preventDefault();
     const go = () => {
       const row = document.querySelector(`li.file-row[data-file="${CSS.escape(file.id)}"]`);
-      clearSlots();
-      if (row) slideIn(row, zone);
-      const place = zone.dataset.folderName || "the folder";
+      if (row) {
+        row.classList.remove("dragging");
+        row.dataset.folder = z.dataset.dropFolder;
+        row.dataset.top = z.dataset.top;
+        row.classList.add("just-moved");
+        if (gap.parentElement) gap.replaceWith(row);
+        else listOf(z, true).append(row);
+      }
+      closeGap();
+      const place = z.dataset.folderName || "the folder";
       fetch("/admin/files/" + encodeURIComponent(file.id), {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ action: "move", folder_id: zone.dataset.dropFolder }),
+        body: new URLSearchParams({ action: "move", folder_id: z.dataset.dropFolder }),
       })
         .then(() => {
           toast(`Moved to ${place}.`);
@@ -361,8 +367,8 @@ document.addEventListener("change", (e) => {
         })
         .catch(() => location.reload());
     };
-    if (zone.dataset.top === file.top) return go();
-    const place = zone.dataset.folderName || "that folder";
+    if (z.dataset.top === file.top) return go();
+    const place = z.dataset.folderName || "that folder";
     askFirst(
       `Move ${file.name} to ${place}? Investors with access to that folder will be able to see it (if it is Visible), and investors who only had access to where it was will no longer see it.`,
       { textContent: "Move" }, // the confirm button reads "Move", not "Continue"
@@ -370,10 +376,13 @@ document.addEventListener("change", (e) => {
     );
   });
   document.addEventListener("dragend", () => {
-    document.querySelectorAll(".dragging").forEach((el) => el.classList.remove("dragging"));
-    lightMove(null);
+    // Still waiting on the "are you sure" window? Keep the gap; it closes when that does.
+    if (!document.querySelector("dialog.confirm-dialog[open]")) {
+      document.querySelectorAll(".dragging").forEach((el) => el.classList.remove("dragging"));
+      closeGap();
+    }
     springOpen(null);
-    clearSlots();
+    zone = null;
     dragging = null;
   });
   // After a move the page reloads: flash the file that moved, and bring it into view if it is off screen.
