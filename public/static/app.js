@@ -250,6 +250,12 @@ document.addEventListener("change", (e) => {
   // subfolders only offers its own area down by its Upload row, so the gap never opens away from the pointer.
   const zoneAt = (t) => {
     if (!(t instanceof Element)) return null;
+    // Over an open folder's title bar: put it directly in that folder.
+    const head = t.closest("summary.folder-head");
+    if (head && head.parentElement.open) {
+      const body = head.parentElement.querySelector(":scope > .folder-body");
+      return (body && (body.querySelector(":scope > .subfolder.loose") || (hasSubBoxes(body) ? null : body))) || null;
+    }
     const z = t.closest("[data-drop-folder]");
     if (!z) return null;
     if (z.classList.contains("folder-body") && hasSubBoxes(z) && !t.closest(".folder-foot")) return null;
@@ -265,6 +271,48 @@ document.addEventListener("change", (e) => {
       else z.insertBefore(list, z.classList.contains("folder-body") ? z.querySelector(":scope > .folder-foot") : null);
     }
     return list;
+  };
+  // A folder that has subfolders but no files of its own has nowhere to drop a file "directly in" it. While a
+  // file is dragged, each such folder shows an empty "Files directly in ..." box at its top.
+  const addLooseTargets = () => {
+    for (const body of document.querySelectorAll("details.folder > .folder-body[data-drop-folder]")) {
+      if (!hasSubBoxes(body) || body.querySelector(":scope > .subfolder.loose")) continue;
+      const box = document.createElement("div");
+      box.className = "subfolder admin loose temp-loose";
+      box.dataset.dropFolder = body.dataset.dropFolder;
+      box.dataset.top = body.dataset.top;
+      box.dataset.folderName = body.dataset.folderName;
+      const head = document.createElement("div");
+      head.className = "subfolder-head";
+      const title = document.createElement("h3");
+      title.className = "subfolder-title";
+      title.textContent = "Files directly in " + (body.dataset.folderName || "this folder");
+      const count = document.createElement("span");
+      count.className = "subfolder-count";
+      count.textContent = "0 files";
+      head.append(title, count);
+      box.append(head);
+      body.prepend(box);
+    }
+  };
+  // A temporary box that nothing was dropped into goes away; one that got a file stays, as a real box.
+  const settleLooseTargets = () => {
+    for (const box of document.querySelectorAll(".temp-loose")) {
+      if (!box.querySelector("li.file-row")) {
+        box.remove();
+        continue;
+      }
+      box.classList.remove("temp-loose");
+      box.id = "loose-" + box.dataset.dropFolder;
+      const title = box.querySelector(".subfolder-title");
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "sub-toggle";
+      toggle.setAttribute("aria-expanded", "true");
+      toggle.setAttribute("aria-label", "Fold or unfold this subfolder");
+      toggle.title = "Fold or unfold";
+      if (title) title.prepend(toggle);
+    }
   };
   const closeGaps = () => {
     fileGap.remove();
@@ -408,7 +456,11 @@ document.addEventListener("change", (e) => {
     setTimeout(() => ghost.remove(), 0);
     // It leaves its place a moment later (changing the page at once can cancel the drag).
     const el = dragging.el;
-    setTimeout(() => dragging && el.classList.add("dragging"), 0);
+    setTimeout(() => {
+      if (!dragging) return;
+      el.classList.add("dragging");
+      if (dragging.kind === "file") addLooseTargets();
+    }, 0);
   });
   document.addEventListener("dragover", (e) => {
     if (!dragging || !e.dataTransfer) return;
@@ -454,17 +506,23 @@ document.addEventListener("change", (e) => {
     const z = zoneAt(e.target) || zone;
     if (!z) return;
     e.preventDefault();
+    let ran = false;
     const go = () => {
+      ran = true;
       const row = d.el;
       const before = idOfNext(fileGap, (n) => n.matches("li.file-row"));
       row.classList.remove("dragging");
-      if (z.dataset.dropFolder === d.folder && before === d.nextId) return closeGaps(); // dropped back where it was
+      if (z.dataset.dropFolder === d.folder && before === d.nextId) {
+        closeGaps();
+        return settleLooseTargets(); // dropped back where it was
+      }
       const from = row.closest("[data-drop-folder]");
       row.dataset.folder = z.dataset.dropFolder;
       row.dataset.top = z.dataset.top;
       if (fileGap.parentElement) fileGap.replaceWith(row);
       else listOf(z, true).append(row);
       closeGaps();
+      settleLooseTargets();
       if (from && from !== z) tidyBox(from);
       tidyBox(z);
       refreshTop(document.getElementById(d.top));
@@ -478,12 +536,22 @@ document.addEventListener("change", (e) => {
       { textContent: "Move" }, // the confirm button reads "Move", not "Continue"
       go,
     );
+    // If you say no, put everything back as it was.
+    const dlg = document.querySelector("dialog.confirm-dialog[open]");
+    if (dlg)
+      dlg.addEventListener("close", () => {
+        if (ran) return;
+        d.el.classList.remove("dragging");
+        closeGaps();
+        settleLooseTargets();
+      });
   });
   document.addEventListener("dragend", () => {
     // Still waiting on the "are you sure" window? Keep the gap; it closes when that does.
     if (!document.querySelector("dialog.confirm-dialog[open]")) {
       document.querySelectorAll(".dragging").forEach((el) => el.classList.remove("dragging"));
       closeGaps();
+      settleLooseTargets();
     }
     springOpen(null);
     zone = null;
