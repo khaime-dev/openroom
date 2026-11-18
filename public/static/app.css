@@ -340,7 +340,7 @@ details.more input { width: 100%; margin: 4px 0 6px; }
 .subfolder-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 16px; }
 /* Admin: each subfolder is its own box, so it is clear which files belong to it. The title is the
    largest thing in the box, the files sit inside it, and the box lines up with the folder above. */
-.subfolder.admin { margin: 14px 0 0 32px; padding: 0; border: 1px solid var(--line); border-radius: 14px; background: #fff; overflow: hidden; }
+.subfolder.admin { margin: 14px 0 0 20px; padding: 0; border: 1px solid var(--line); border-radius: 14px; background: #fff; overflow: hidden; }
 .subfolder.admin .subfolder-head { gap: 12px; padding: 10px 14px; background: #f4f6fa; border-bottom: 1px solid var(--line); }
 .subfolder.admin .subfolder-title { flex: 1; min-width: 0; display: flex; align-items: center; padding: 0; font-size: 15px; letter-spacing: 0; text-transform: none; color: var(--navy); overflow-wrap: anywhere; }
 .subfolder.admin .subfolder-title::before { content: ""; flex: none; width: 16px; height: 12px; margin-right: 10px; border-radius: 3px; background: var(--blue); }
