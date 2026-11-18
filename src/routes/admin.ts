@@ -19,6 +19,7 @@ import {
   parseDateInput,
   randomId,
   detectContentType,
+  fileOrder,
   VIEWABLE_TYPES,
   viewKind,
   slugify,
@@ -30,6 +31,7 @@ import { availableUpdate } from "../updates";
 import { VERSION } from "../version";
 
 export const adminRoutes = new Hono<AppEnv>();
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const MAX_UPLOAD = 50 * 1024 * 1024;
 
 const adminOnly: MiddlewareHandler<AppEnv> = async (c, next) => {
@@ -57,6 +59,7 @@ const MESSAGES: Record<string, [kind: "ok" | "error", text: string]> = {
   uploaded: ["ok", "Upload finished."],
   upload_none: ["error", "Choose at least one file."],
   file_saved: ["ok", "File saved."],
+  file_moved: ["ok", "Moved."],
   file_deleted: ["ok", "File deleted."],
   slug_saved: ["ok", "Link saved. Use the copy icon next to the name to share it."],
   slug_cleared: ["ok", "Link removed."],
@@ -163,7 +166,7 @@ adminRoutes.get("/admin", async (c) => {
   const update = await availableUpdate(c.env, (p) => c.executionCtx.waitUntil(p));
   const [folders, files, grants, stats] = await Promise.all([
     db.prepare("SELECT * FROM folders ORDER BY position, name COLLATE NOCASE").all<Folder>(),
-    db.prepare("SELECT * FROM files ORDER BY name COLLATE NOCASE").all<FileRow>(),
+    db.prepare(`SELECT * FROM files ORDER BY ${fileOrder()}`).all<FileRow>(),
     db
       .prepare(
         `SELECT g.folder_id, i.id, i.name, i.email FROM grants g JOIN investors i ON i.id = g.investor_id
@@ -233,7 +236,7 @@ adminRoutes.get("/admin", async (c) => {
           const rows = (list: FileRow[], where: Folder) => fileRows(list, where, allFolders, statsById);
           // A folder folds up to its header line; the browser remembers which (see app.js).
           return html`<details class="card folder fold" id="${folder.id}" open data-fold>
-            <summary class="folder-head" title="Fold or unfold this folder">
+            <summary class="folder-head" draggable="true" title="Fold or unfold this folder. Drag it to put folders in order.">
               <span class="fold-arrow" aria-hidden="true"></span>
               <div class="folder-icon" aria-hidden="true"></div>
               <div class="folder-title">
@@ -247,16 +250,19 @@ adminRoutes.get("/admin", async (c) => {
                 <span class="tag ${people.length ? "green" : "grey"}" title="${people.map((p) => p.name || p.email).join(", ")}">${shared}</span>
               </div>
             </summary>
-            <div class="folder-body">
-              ${inFolder(folder.id).length
-                ? rows(inFolder(folder.id), folder)
-                : subs.length
-                  ? ""
-                  : html`<p class="muted small empty">No files yet. Upload the first one below.</p>`}
+            <div class="folder-body" data-drop-folder="${folder.id}" data-top="${folder.id}" data-folder-name="${folder.name}">
+              ${inFolder(folder.id).length && subs.length
+                ? html`<div class="loose-files" data-drop-folder="${folder.id}" data-top="${folder.id}" data-folder-name="${folder.name}">${rows(inFolder(folder.id), folder)}</div>`
+                : inFolder(folder.id).length
+                  ? rows(inFolder(folder.id), folder)
+                  : subs.length
+                    ? ""
+                    : html`<p class="muted small empty">No files yet. Upload the first one below.</p>`}
               ${subs.map(
-                (sub) => html`<div class="subfolder admin" id="${sub.id}">
-                  <div class="subfolder-head">
-                    <h3 class="subfolder-title">${linkChip(sub.slug, sub.name)}${sub.name}</h3>
+                (sub) => html`<div class="subfolder admin" id="${sub.id}" data-drop-folder="${sub.id}" data-top="${folder.id}" data-folder-name="${sub.name}">
+                  <div class="subfolder-head" draggable="true" title="Drag to put subfolders in order">
+                    <h3 class="subfolder-title"><button type="button" class="sub-toggle" aria-expanded="true" aria-label="Fold or unfold this subfolder" title="Fold or unfold"></button>${linkChip(sub.slug, sub.name)}${sub.name}</h3>
+                    <span class="subfolder-count">${plural(inFolder(sub.id).filter((f) => !f.placeholder).length, "file")}</span>
                     <span class="subfolder-actions">
                     <button type="button" class="link-btn small" data-upload-open="up-${sub.id}">Add files</button>
                     <dialog class="upload-dialog" id="up-${sub.id}" aria-label="Add files to ${sub.name}">
@@ -268,7 +274,7 @@ adminRoutes.get("/admin", async (c) => {
                       </form>
                     </dialog>
                     <details class="menu">
-                      <summary class="link-btn small">Subfolder</summary>
+                      <summary class="link-btn small">Options</summary>
                       <div class="menu-body stack">
                         <form method="post" action="/admin/folders/${sub.id}" class="inline-form">
                           <input name="name" value="${sub.name}" required maxlength="80" aria-label="Subfolder name">
@@ -350,7 +356,7 @@ function fileRows(list: FileRow[], folder: Folder, allFolders: Folder[], statsBy
       const s = statsById.get(file.id);
       if (file.placeholder) {
         // A template placeholder: the one thing to do is upload the real document over it.
-        return html`<li class="file-row placeholder-row">
+        return html`<li class="file-row placeholder-row" draggable="true" data-file="${file.id}" data-name="${file.name}" data-folder="${folder.id}" data-top="${folder.parent_id ?? folder.id}">
           <span class="kind kind-${fileKind(file.content_type, file.name).toLowerCase()}">${fileKind(file.content_type, file.name)}</span>
           <span class="file-main">
             <span class="file-name">${file.name}</span>
@@ -373,7 +379,7 @@ function fileRows(list: FileRow[], folder: Folder, allFolders: Folder[], statsBy
         </li>`;
       }
       const hiddenByType = file.published === 1 && !visibleToInvestor(file);
-      return html`<li class="file-row">
+      return html`<li class="file-row" draggable="true" data-file="${file.id}" data-name="${file.name}" data-folder="${folder.id}" data-top="${folder.parent_id ?? folder.id}">
         <span class="kind kind-${fileKind(file.content_type, file.name).toLowerCase()}">${fileKind(file.content_type, file.name)}</span>
         <span class="file-main">
           <span class="file-title">${linkChip(file.slug, file.name)}<a class="file-name" href="/admin/preview/f/${file.id}">${file.name}</a></span>
@@ -685,13 +691,66 @@ adminRoutes.post("/admin/files/:id", async (c) => {
     }
     case "move": {
       const target = await c.env.DB.prepare("SELECT id FROM folders WHERE id = ?").bind(str(form.folder_id)).first();
-      if (target) await c.env.DB.prepare("UPDATE files SET folder_id = ? WHERE id = ?").bind(target.id, file.id).run();
+      if (target) await c.env.DB.prepare("UPDATE files SET position = CASE WHEN folder_id != ? THEN NULL ELSE position END, folder_id = ? WHERE id = ?").bind(target.id, target.id, file.id).run();
       const shown = target && target.id !== file.folder_id ? await dropEmptyHeading(c, file.folder_id) : file.folder_id;
-      return c.redirect(`/admin?m=file_saved#${target?.id ?? shown}`, 303);
+      return c.redirect(`/admin?m=file_moved#${target?.id ?? shown}`, 303);
     }
   }
   if (form.back === "file") return c.redirect(`/admin/files/${file.id}?m=file_saved`, 303);
   return c.redirect(`/admin?m=file_saved#${file.folder_id}`, 303);
+});
+
+/** Positions for a list that has just been put in order: 10, 20, 30... (1, 2, 3... for a very long list). */
+const spread = (n: number) => (n > 90 ? 1 : 10);
+
+/**
+ * Puts a file at a place in a folder: `folder_id` (default: where it is) and `before`, the file it goes in
+ * front of (none, or one that is not there: last). Everything in that folder is then numbered in order,
+ * so the order sticks. Used by dragging files on the Documents page.
+ */
+adminRoutes.post("/admin/files/:id/place", async (c) => {
+  const file = await c.env.DB.prepare("SELECT * FROM files WHERE id = ?").bind(c.req.param("id")).first<FileRow>();
+  if (!file) return c.text("Not found", 404);
+  const form = await c.req.parseBody();
+  const wanted = str(form.folder_id) || file.folder_id;
+  const target = await c.env.DB.prepare("SELECT id FROM folders WHERE id = ?").bind(wanted).first<{ id: string }>();
+  if (!target) return c.redirect(`/admin?m=file_saved#${file.folder_id}`, 303);
+  const others = (
+    await c.env.DB.prepare(`SELECT id FROM files WHERE folder_id = ? AND id != ? ORDER BY ${fileOrder()}`).bind(target.id, file.id).all<{ id: string }>()
+  ).results.map((r) => r.id);
+  const before = str(form.before);
+  const at = before && others.includes(before) ? others.indexOf(before) : others.length;
+  others.splice(at, 0, file.id);
+  const step = spread(others.length);
+  await c.env.DB.batch(
+    others.map((id, i) =>
+      id === file.id
+        ? c.env.DB.prepare("UPDATE files SET folder_id = ?, position = ? WHERE id = ?").bind(target.id, (i + 1) * step, id)
+        : c.env.DB.prepare("UPDATE files SET position = ? WHERE id = ?").bind((i + 1) * step, id),
+    ),
+  );
+  if (target.id !== file.folder_id) await dropEmptyHeading(c, file.folder_id);
+  return c.redirect(`/admin?m=file_moved#${target.id}`, 303);
+});
+
+/**
+ * Puts a folder or subfolder at a place among its siblings (the same parent): `before` is the sibling it
+ * goes in front of (none, or one that is not a sibling: last). The siblings are then numbered in order.
+ * Used by dragging folders and subfolders on the Documents page.
+ */
+adminRoutes.post("/admin/folders/:id/place", async (c) => {
+  const folder = await c.env.DB.prepare("SELECT * FROM folders WHERE id = ?").bind(c.req.param("id")).first<Folder>();
+  if (!folder) return c.text("Not found", 404);
+  const form = await c.req.parseBody();
+  const siblings = (
+    await c.env.DB.prepare("SELECT id FROM folders WHERE parent_id IS ? AND id != ? ORDER BY position, name COLLATE NOCASE").bind(folder.parent_id, folder.id).all<{ id: string }>()
+  ).results.map((r) => r.id);
+  const before = str(form.before);
+  const at = before && siblings.includes(before) ? siblings.indexOf(before) : siblings.length;
+  siblings.splice(at, 0, folder.id);
+  const step = spread(siblings.length);
+  await c.env.DB.batch(siblings.map((id, i) => c.env.DB.prepare("UPDATE folders SET position = ? WHERE id = ?").bind((i + 1) * step, id)));
+  return c.redirect(`/admin?m=file_moved#${folder.id}`, 303);
 });
 
 /** Puts a new file into an existing row: same id, link, folder and settings. "bad" when it cannot be used. */
@@ -781,7 +840,7 @@ adminRoutes.post("/admin/files/:id/save", async (c) => {
   const target = typeof form.folder_id === "string" && form.folder_id ? await c.env.DB.prepare("SELECT id FROM folders WHERE id = ?").bind(form.folder_id).first<{ id: string }>() : null;
   if (target) folderId = target.id;
 
-  await c.env.DB.prepare("UPDATE files SET name = ?, slug = ?, published = ?, folder_id = ? WHERE id = ?").bind(name, slug, publish, folderId, file.id).run();
+  await c.env.DB.prepare("UPDATE files SET name = ?, slug = ?, published = ?, position = CASE WHEN folder_id != ? THEN NULL ELSE position END, folder_id = ? WHERE id = ?").bind(name, slug, publish, folderId, folderId, file.id).run();
   if (name !== file.name) await c.env.FILES.delete(renderKey(file.id)); // the rendered page carries the name as its title
   if (name !== file.name) await headingFollowsFile(c, folderId, file.id, name);
   if (folderId !== file.folder_id) await dropEmptyHeading(c, file.folder_id);

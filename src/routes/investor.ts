@@ -5,7 +5,7 @@ import type { AppEnv, FileRow, Folder, Investor } from "../env";
 import { logEvent } from "../events";
 import { messagePage, page } from "../layout";
 import { safeNext } from "../links";
-import { now, VIEWABLE_TYPES } from "../util";
+import { fileOrder, now, VIEWABLE_TYPES } from "../util";
 import { roomBody, viewerBody, type RoomLinks } from "../views";
 
 const INVESTOR_LINKS: RoomLinks = { room: "/room", file: (id) => `/d/${id}` };
@@ -40,7 +40,7 @@ investorRoutes.get("/room", async (c) => {
       .all<Folder>(),
     c.env.DB.prepare(
       `SELECT fi.* FROM files fi JOIN folders f ON f.id = fi.folder_id JOIN grants g ON g.folder_id = COALESCE(f.parent_id, f.id)
-        WHERE g.investor_id = ? AND fi.published = 1 AND fi.placeholder = 0 ORDER BY fi.name COLLATE NOCASE`,
+        WHERE g.investor_id = ? AND fi.published = 1 AND fi.placeholder = 0 ORDER BY ${fileOrder("fi.")}`,
     )
       .bind(investor.id)
       .all<FileRow>(),

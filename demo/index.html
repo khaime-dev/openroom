@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0F172A">
+<title>Openroom live demo</title>
+<meta name="description" content="Try an investor data room in your browser. Click around as an investor, or see the admin side. No signup, nothing is saved.">
+<link rel="canonical" href="https://openroomdemo.buildwithgabe.io/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Openroom">
+<meta property="og:title" content="Openroom live demo: try an investor data room">
+<meta property="og:description" content="Click around as an investor, or see the admin side. No signup, nothing is saved. Open source and free.">
+<meta property="og:url" content="https://openroomdemo.buildwithgabe.io/">
+<meta property="og:image" content="https://openroomdemo.buildwithgabe.io/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Openroom live demo: a sample investor data room with folders and documents">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Openroom live demo: try an investor data room">
+<meta name="twitter:description" content="Click around as an investor, or see the admin side. No signup, nothing is saved.">
+<meta name="twitter:image" content="https://openroomdemo.buildwithgabe.io/og.png">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="demo.css">
+</head>
+<body>
+<div class="demo-bar" role="status">This is a demo. Nothing here is real. <a href="https://github.com/plato15/openroom" rel="noopener">Get your own</a></div>
+<div id="app"><noscript><p style="padding:24px">The demo needs JavaScript. Openroom itself does not.</p></noscript></div>
+
+<dialog class="upload-dialog" id="upload-dlg" aria-label="Upload a file">
+  <form class="upload-form" id="upload-form">
+    <div class="dlg-head"><h3>Upload a file</h3><button type="button" class="dlg-x" data-close aria-label="Close">&times;</button></div>
+    <input type="file" name="file" aria-label="File to upload">
+    <p class="small muted">Demo only: nothing is really uploaded. A sample file with this name is added to the page.</p>
+    <div class="dlg-actions"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn" type="submit">Upload</button></div>
+  </form>
+</dialog>
+<dialog class="drawer" id="edit-dlg" aria-label="Edit document">
+  <form class="drawer-form" id="edit-form">
+    <div class="drawer-head"><div><p class="small muted">Edit document</p><h3></h3></div><button type="button" class="dlg-x" data-close aria-label="Close">&times;</button></div>
+    <div class="drawer-body">
+      <section class="drawer-sec"><label class="toggle"><input type="checkbox" name="visible"><span class="track" aria-hidden="true"></span><span>Visible to investors<small>Only people with access to this folder can see it.</small></span></label></section>
+      <section class="drawer-sec"><h4>Name</h4><input name="name" maxlength="160" aria-label="File name"></section>
+    </div>
+    <div class="drawer-foot"><span></span><span class="foot-right"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn" type="submit">Save changes</button></span></div>
+  </form>
+</dialog>
+<script src="data.js"></script>
+<script src="demo.js"></script>
+</body>
+</html>

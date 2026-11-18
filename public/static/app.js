@@ -224,6 +224,324 @@ document.addEventListener("change", (e) => {
   });
   document.addEventListener("dragend", () => light(null));
 
+  // Dragging to put things in order, and to move files.
+  //   A file row: drop it anywhere in any folder or subfolder (its own too, to reorder). While you drag, the
+  //   row leaves its place and a gap opens in the list right where your pointer is; that is where it lands.
+  //   A folder or subfolder's title bar: drop it among its own siblings. A gap opens where it will go.
+  // A folded folder or subfolder you hover over opens by itself. Moving a file into a different top-level
+  // folder changes who can see it, so that asks first. On drop the thing lands in the gap and the counts
+  // update in place, and the server is told in the background: the screen stays exactly as it is (no reload,
+  // no flash, no scrolling). Only if saving fails does the page reload, so it shows what is really saved.
+  // (Uploads are the "Files" drags above; these carry their own types, so they never mix.)
+  const ROW = "application/x-openroom-file";
+  const FOLDER = "application/x-openroom-folder";
+  let dragging = null; // { kind: "file" | "folder", id, name, el, ... }
+  let zone = null; // a file's target: the folder or subfolder under the pointer
+  let spring = null; // timer: opens a folded folder you are hovering over
+  let springOn = null;
+  const fileGap = document.createElement("li");
+  fileGap.className = "drop-gap";
+  fileGap.setAttribute("aria-hidden", "true");
+  const folderGap = document.createElement("div");
+  folderGap.setAttribute("aria-hidden", "true");
+
+  const hasSubBoxes = (body) => !!body.querySelector(":scope > .subfolder");
+  // Where a file dropped at this spot would go: a subfolder box, or the folder's own level (see below).
+  const zoneAt = (t) => {
+    if (!(t instanceof Element)) return null;
+    // Over an open folder's title bar: put it directly in that folder, at the top of its files.
+    const head = t.closest("summary.folder-head");
+    if (head && head.parentElement.open) return looseFor(head.parentElement);
+    const z = t.closest("[data-drop-folder]");
+    if (!z) return null;
+    // Anywhere in a folder that is not inside one of its subfolder boxes (the strip between boxes, the Upload
+    // row, the space around) is the folder's own level: the gap opens at the top of its files. Between two
+    // subfolder boxes it stays with the box you came from, so the gap does not jump back and forth.
+    if (z.classList.contains("folder-body")) {
+      if (zone && zone !== z && z.contains(zone) && zone.classList.contains("subfolder") && !t.closest(".folder-foot")) return zone;
+      const d = z.closest("details.folder");
+      return d ? looseFor(d) : z;
+    }
+    return z;
+  };
+  const listOf = (z, make) => {
+    let list = z.querySelector(":scope > ul.files");
+    if (!list && make) {
+      list = document.createElement("ul");
+      list.className = "files admin";
+      const empty = z.querySelector(":scope > .empty");
+      if (empty) empty.replaceWith(list);
+      else z.insertBefore(list, z.classList.contains("folder-body") ? z.querySelector(":scope > .folder-foot") : null);
+    }
+    return list;
+  };
+  // A folder's own files are a plain list right under its title bar. A folder that has subfolders but no
+  // files of its own gets an empty one while you hover its title bar with a file, so the gap opens there.
+  const looseFor = (details) => {
+    const body = details.querySelector(":scope > .folder-body");
+    if (!body) return null;
+    if (!hasSubBoxes(body)) return body; // no subfolders: the folder's own list is the whole body
+    let box = body.querySelector(":scope > .loose-files");
+    if (!box) {
+      box = document.createElement("div");
+      box.className = "loose-files temp-loose";
+      box.dataset.dropFolder = body.dataset.dropFolder;
+      box.dataset.top = body.dataset.top;
+      box.dataset.folderName = body.dataset.folderName;
+      body.prepend(box);
+    }
+    return box;
+  };
+  // A temporary list that nothing was dropped into goes away; one that got a file stays, as the folder's list.
+  const settleLooseTargets = (keep) => {
+    for (const box of document.querySelectorAll(".temp-loose")) {
+      if (box === keep) continue;
+      if (!box.querySelector("li.file-row")) box.remove();
+      else box.classList.remove("temp-loose");
+    }
+  };
+  const closeGaps = () => {
+    fileGap.remove();
+    folderGap.remove();
+    // A list made only to hold the gap goes away with it.
+    document.querySelectorAll("ul.files.admin:empty").forEach((u) => u.remove());
+  };
+  const isSibling = (el, c) => c !== el && (el.matches("details.folder") ? c.matches("details.folder") : c.matches(".subfolder.admin"));
+  const siblingsOf = (el) => [...el.parentElement.children].filter((c) => isSibling(el, c));
+  const firstBelow = (items, y) =>
+    items.find((r) => {
+      const b = r.getBoundingClientRect();
+      return y < b.top + b.height / 2;
+    });
+  // Opens the gap between the two files the pointer is between.
+  const moveFileGap = (z, y) => {
+    if (z.classList.contains("is-collapsed")) return closeGaps();
+    const list = listOf(z, true);
+    const rows = [...list.querySelectorAll(":scope > li.file-row")].filter((r) => !r.classList.contains("dragging"));
+    const before = firstBelow(rows, y);
+    if (fileGap.parentElement === list && (before ? fileGap.nextElementSibling === before : fileGap === list.lastElementChild)) return;
+    list.insertBefore(fileGap, before || null);
+  };
+  const moveFolderGap = (y) => {
+    const el = dragging.el;
+    const sibs = siblingsOf(el);
+    const before = firstBelow(sibs, y);
+    folderGap.className = "drop-gap folder-gap" + (el.matches("details.folder") ? "" : " is-sub");
+    if (before) {
+      if (folderGap.nextElementSibling !== before) before.before(folderGap);
+    } else {
+      const last = sibs[sibs.length - 1] || el;
+      if (last.nextElementSibling !== folderGap) last.after(folderGap);
+    }
+  };
+  // Hovering a folded folder or subfolder for a moment opens it, so it can be dropped into.
+  const springOpen = (el) => {
+    if (springOn === el) return;
+    clearTimeout(spring);
+    springOn = el;
+    if (!el) return;
+    spring = setTimeout(() => {
+      if (el instanceof HTMLDetailsElement) el.open = true;
+      else el.classList.remove("is-collapsed");
+    }, 450);
+  };
+  const plural = (n, one) => `${n} ${n === 1 ? one : one + "s"}`;
+  const realRows = (scope) => [...scope.querySelectorAll("li.file-row:not(.placeholder-row)")];
+  // A folder's header tags that depend on its files: how many to replace, and how many can be downloaded.
+  const refreshTop = (details) => {
+    if (!details) return;
+    const all = [...details.querySelectorAll("li.file-row")];
+    const real = all.filter((r) => !r.classList.contains("placeholder-row"));
+    const count = details.querySelector(":scope > summary .folder-title .count");
+    if (count) count.textContent = plural(real.length, "file");
+    const tags = details.querySelector(":scope > summary .folder-tags");
+    if (!tags) return;
+    const toReplace = all.length - real.length;
+    let amber = tags.querySelector(".tag.amber");
+    if (toReplace && !amber) {
+      amber = document.createElement("span");
+      amber.className = "tag amber";
+      tags.prepend(amber);
+    }
+    if (amber) {
+      if (toReplace) amber.textContent = `${toReplace} to replace`;
+      else amber.remove();
+    }
+    const dl = real.filter((r) => r.querySelector(".switch.on")).length;
+    const dlTag = [...tags.querySelectorAll(".tag")].find((t) => /downloadable|View only/.test(t.textContent));
+    if (dlTag) {
+      dlTag.textContent = dl ? `${dl} downloadable` : "View only";
+      dlTag.classList.toggle("blue", !!dl);
+      dlTag.classList.toggle("grey", !dl);
+    }
+  };
+  // After a file has left or arrived: update the box's count, and take away a box that is now empty (the
+  // server does the same for a subfolder, so a reload would agree).
+  const tidyBox = (box) => {
+    if (!box || !box.isConnected) return;
+    if (box.classList.contains("subfolder")) {
+      if (!box.querySelector("li.file-row")) return box.remove();
+      const c = box.querySelector(":scope > .subfolder-head .subfolder-count");
+      if (c) c.textContent = plural(realRows(box).length, "file");
+    } else if (box.classList.contains("loose-files")) {
+      if (!box.querySelector("li.file-row")) box.remove();
+    } else if (box.classList.contains("folder-body") && !box.querySelector(":scope > .subfolder, li.file-row") && !box.querySelector(":scope > .empty")) {
+      const p = document.createElement("p");
+      p.className = "muted small empty";
+      p.textContent = "No files yet. Upload the first one below.";
+      box.insertBefore(p, box.querySelector(":scope > .folder-foot"));
+    }
+    document.querySelectorAll("ul.files.admin:empty").forEach((u) => u.remove());
+  };
+  // Tell the server in the background. Nothing on the page changes when it answers; if it cannot be saved,
+  // reload so the page shows what really is.
+  const send = (url, params) => {
+    fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      redirect: "manual", // the answer is a redirect to the Documents page, which we do not need
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(params),
+    })
+      .then((r) => {
+        if (!(r.ok || r.type === "opaqueredirect")) location.reload();
+      })
+      .catch(() => location.reload());
+  };
+  const idOfNext = (gapEl, test) => {
+    const n = gapEl.nextElementSibling;
+    return n && test(n) ? n.dataset.file || n.id || "" : "";
+  };
+
+  document.addEventListener("dragstart", (e) => {
+    if (!(e.target instanceof Element) || !e.dataTransfer) return;
+    let name = "";
+    const row = e.target.closest("li.file-row[data-file]");
+    if (row) {
+      dragging = { kind: "file", id: row.dataset.file, name: row.dataset.name, folder: row.dataset.folder, top: row.dataset.top, el: row };
+      dragging.nextId = (row.nextElementSibling && row.nextElementSibling.dataset.file) || "";
+      e.dataTransfer.setData(ROW, dragging.id);
+      name = dragging.name || "File";
+    } else {
+      const head = e.target.closest("summary.folder-head, .subfolder.admin[id] > .subfolder-head");
+      const el = head && head.closest("details.folder, .subfolder.admin");
+      if (!head || !el || !el.id) return;
+      const body = el.matches("details.folder") ? el.querySelector(":scope > .folder-body") : el;
+      dragging = { kind: "folder", id: el.id, name: (body && body.dataset.folderName) || "Folder", el };
+      const next = siblingsOf(el).find((c) => el.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING);
+      dragging.nextId = next ? next.id : "";
+      e.dataTransfer.setData(FOLDER, dragging.id);
+      name = dragging.name;
+    }
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", name);
+    // A small card with the name under the pointer, instead of the browser's faded copy.
+    const ghost = document.createElement("div");
+    ghost.className = "drag-ghost";
+    ghost.textContent = name;
+    document.body.append(ghost);
+    e.dataTransfer.setDragImage(ghost, 18, 18);
+    setTimeout(() => ghost.remove(), 0);
+    // It leaves its place a moment later (changing the page at once can cancel the drag).
+    const el = dragging.el;
+    setTimeout(() => dragging && el.classList.add("dragging"), 0);
+  });
+  document.addEventListener("dragover", (e) => {
+    if (!dragging || !e.dataTransfer) return;
+    const types = Array.from(e.dataTransfer.types);
+    const t = e.target instanceof Element ? e.target : null;
+    if (dragging.kind === "file" && types.includes(ROW)) {
+      zone = zoneAt(t);
+      settleLooseTargets(zone);
+      const closedFolder = t && t.closest("details.folder:not([open])");
+      springOpen(closedFolder || (zone && zone.classList.contains("is-collapsed") ? zone : null));
+      if (!zone) {
+        e.dataTransfer.dropEffect = "none";
+        return closeGaps();
+      }
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      moveFileGap(zone, e.clientY);
+    } else if (dragging.kind === "folder" && types.includes(FOLDER)) {
+      // Only among its own siblings: the pointer has to be inside the folder (or the page) it lives in.
+      if (!t || !dragging.el.parentElement.contains(t)) {
+        e.dataTransfer.dropEffect = "none";
+        return closeGaps();
+      }
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      moveFolderGap(e.clientY);
+    }
+  });
+  document.addEventListener("drop", (e) => {
+    if (!dragging || !e.dataTransfer) return;
+    const types = Array.from(e.dataTransfer.types);
+    const d = dragging;
+    if (d.kind === "folder" && types.includes(FOLDER)) {
+      if (!folderGap.parentElement) return;
+      e.preventDefault();
+      const before = idOfNext(folderGap, (n) => isSibling(d.el, n));
+      d.el.classList.remove("dragging");
+      if (before === d.nextId) return closeGaps(); // dropped back where it was
+      folderGap.replaceWith(d.el);
+      send("/admin/folders/" + encodeURIComponent(d.id) + "/place", { before });
+      return;
+    }
+    if (d.kind !== "file" || !types.includes(ROW)) return;
+    const z = zoneAt(e.target) || zone;
+    if (!z) return;
+    e.preventDefault();
+    let ran = false;
+    const go = () => {
+      ran = true;
+      const row = d.el;
+      const before = idOfNext(fileGap, (n) => n.matches("li.file-row"));
+      row.classList.remove("dragging");
+      if (z.dataset.dropFolder === d.folder && before === d.nextId) {
+        closeGaps();
+        return settleLooseTargets(); // dropped back where it was
+      }
+      const from = row.closest("[data-drop-folder]");
+      row.dataset.folder = z.dataset.dropFolder;
+      row.dataset.top = z.dataset.top;
+      if (fileGap.parentElement) fileGap.replaceWith(row);
+      else listOf(z, true).append(row);
+      closeGaps();
+      settleLooseTargets();
+      if (from && from !== z) tidyBox(from);
+      tidyBox(z);
+      refreshTop(document.getElementById(d.top));
+      refreshTop(document.getElementById(z.dataset.top));
+      send("/admin/files/" + encodeURIComponent(d.id) + "/place", { folder_id: z.dataset.dropFolder, before });
+    };
+    if (z.dataset.top === d.top) return go();
+    const place = z.dataset.folderName || "that folder";
+    askFirst(
+      `Move ${d.name} to ${place}? Investors with access to that folder will be able to see it (if it is Visible), and investors who only had access to where it was will no longer see it.`,
+      { textContent: "Move" }, // the confirm button reads "Move", not "Continue"
+      go,
+    );
+    // If you say no, put everything back as it was.
+    const dlg = document.querySelector("dialog.confirm-dialog[open]");
+    if (dlg)
+      dlg.addEventListener("close", () => {
+        if (ran) return;
+        d.el.classList.remove("dragging");
+        closeGaps();
+        settleLooseTargets();
+      });
+  });
+  document.addEventListener("dragend", () => {
+    // Still waiting on the "are you sure" window? Keep the gap; it closes when that does.
+    if (!document.querySelector("dialog.confirm-dialog[open]")) {
+      document.querySelectorAll(".dragging").forEach((el) => el.classList.remove("dragging"));
+      closeGaps();
+      settleLooseTargets();
+    }
+    springOpen(null);
+    zone = null;
+    dragging = null;
+  });
   // The upload window and the Edit slider: opened by their button; closed by Cancel, the cross, Escape,
   // or a click on the dimmed page around them. (Both press and release must be outside, so selecting
   // text in a field and letting go outside does not close it.)
@@ -355,6 +673,52 @@ if (folds.length) {
     save();
   });
 }
+
+// Subfolders fold up to their title bar too: click the arrow or the name. Remembered in this browser, and a
+// link to something inside one (after an upload, say) always shows it open. "Expand all" opens these as well.
+(() => {
+  const boxes = [...document.querySelectorAll(".subfolder.admin[id]")];
+  if (!boxes.length) return;
+  const KEY = "openroom.folded-subfolders";
+  const read = () => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(KEY) || "[]"));
+    } catch {
+      return new Set();
+    }
+  };
+  const save = () => {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(boxes.filter((b) => b.classList.contains("is-collapsed")).map((b) => b.id)));
+    } catch {
+      // Storage off: folding still works, it just is not remembered.
+    }
+  };
+  const set = (box, collapsed) => {
+    box.classList.toggle("is-collapsed", collapsed);
+    const t = box.querySelector(".sub-toggle");
+    if (t) t.setAttribute("aria-expanded", String(!collapsed));
+  };
+  const saved = read();
+  const target = location.hash ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
+  for (const b of boxes) if (saved.has(b.id) && !(target && b.contains(target))) set(b, true);
+  document.addEventListener("click", (e) => {
+    if (!(e.target instanceof Element)) return;
+    const all = e.target.closest("[data-fold-all]");
+    if (all instanceof HTMLElement && all.dataset.foldAll === "open") {
+      for (const b of boxes) set(b, false);
+      save();
+      return;
+    }
+    const head = e.target.closest(".subfolder.admin[id] > .subfolder-head");
+    if (!head || !head.parentElement) return;
+    // Only the arrow and the name fold it; the buttons and menus on the right do their own thing.
+    if (e.target.closest(".subfolder-actions, .copy-icon, a")) return;
+    if (!e.target.closest(".sub-toggle, .subfolder-title")) return;
+    set(head.parentElement, !head.parentElement.classList.contains("is-collapsed"));
+    save();
+  });
+})();
 
 // Keep your place on the Documents page. After an upload (or any change there) the page reloads; put
 // the screen back on the thing you were using, instead of snapping to the top of its folder.
