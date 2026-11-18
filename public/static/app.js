@@ -423,6 +423,52 @@ if (folds.length) {
   });
 }
 
+// Subfolders fold up to their title bar too: click the arrow or the name. Remembered in this browser, and a
+// link to something inside one (after an upload, say) always shows it open. "Expand all" opens these as well.
+(() => {
+  const boxes = [...document.querySelectorAll(".subfolder.admin[id]")];
+  if (!boxes.length) return;
+  const KEY = "openroom.folded-subfolders";
+  const read = () => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(KEY) || "[]"));
+    } catch {
+      return new Set();
+    }
+  };
+  const save = () => {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(boxes.filter((b) => b.classList.contains("is-collapsed")).map((b) => b.id)));
+    } catch {
+      // Storage off: folding still works, it just is not remembered.
+    }
+  };
+  const set = (box, collapsed) => {
+    box.classList.toggle("is-collapsed", collapsed);
+    const t = box.querySelector(".sub-toggle");
+    if (t) t.setAttribute("aria-expanded", String(!collapsed));
+  };
+  const saved = read();
+  const target = location.hash ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
+  for (const b of boxes) if (saved.has(b.id) && !(target && b.contains(target))) set(b, true);
+  document.addEventListener("click", (e) => {
+    if (!(e.target instanceof Element)) return;
+    const all = e.target.closest("[data-fold-all]");
+    if (all instanceof HTMLElement && all.dataset.foldAll === "open") {
+      for (const b of boxes) set(b, false);
+      save();
+      return;
+    }
+    const head = e.target.closest(".subfolder.admin[id] > .subfolder-head");
+    if (!head || !head.parentElement) return;
+    // Only the arrow and the name fold it; the buttons and menus on the right do their own thing.
+    if (e.target.closest(".subfolder-actions, .copy-icon, a")) return;
+    if (!e.target.closest(".sub-toggle, .subfolder-title")) return;
+    set(head.parentElement, !head.parentElement.classList.contains("is-collapsed"));
+    save();
+  });
+})();
+
 // Keep your place on the Documents page. After an upload (or any change there) the page reloads; put
 // the screen back on the thing you were using, instead of snapping to the top of its folder.
 (() => {

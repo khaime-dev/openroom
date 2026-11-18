@@ -349,6 +349,13 @@ details.more input { width: 100%; margin: 4px 0 6px; }
 .subfolder.admin .files.admin { margin: 0; padding: 0 14px 0 34px; }
 .subfolder.admin .file-row { padding: 10px 0; }
 .subfolder.admin .empty { padding: 12px 14px 12px 34px; }
+.sub-toggle { flex: none; position: relative; width: 24px; height: 24px; margin: 0 4px 0 -6px; padding: 0; border: 0; border-radius: 6px; background: none; cursor: pointer; }
+.sub-toggle:hover { background: #e3e9f3; }
+.sub-toggle::before { content: ""; position: absolute; left: 7px; top: 6px; width: 7px; height: 7px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform .12s; }
+.subfolder.is-collapsed .sub-toggle::before { top: 8px; transform: rotate(-45deg); }
+.subfolder.is-collapsed > :not(.subfolder-head) { display: none; }
+.subfolder.is-collapsed .subfolder-head { border-bottom: 0; }
+.subfolder.admin .subfolder-title { cursor: pointer; }
 /* Drag a file onto another folder or subfolder to move it. */
 .file-row[draggable=true] { cursor: grab; }
 .file-row.dragging { opacity: .45; }

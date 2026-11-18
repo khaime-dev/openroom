@@ -1476,6 +1476,9 @@ describe("Documents page: subfolder boxes and moving files", () => {
     // Files that sit directly in the folder get a box of their own, named as such, next to the subfolders.
     expect(page).toContain("Files directly in Folder");
     expect(page).toContain(">Options<");
+    // Each box can be folded to its title bar, the files directly in the folder too.
+    expect(page.match(/class="sub-toggle"/g)?.length).toBeGreaterThanOrEqual(2); // other tests leave folders in the room too
+    expect(page).toContain(`id="loose-${top}"`);
     expect(page).toContain("1 file");
   });
 

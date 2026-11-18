@@ -251,9 +251,9 @@ adminRoutes.get("/admin", async (c) => {
             </summary>
             <div class="folder-body" data-drop-folder="${folder.id}" data-top="${folder.id}" data-folder-name="${folder.name}">
               ${inFolder(folder.id).length && subs.length
-                ? html`<div class="subfolder admin loose" data-drop-folder="${folder.id}" data-top="${folder.id}" data-folder-name="${folder.name}">
+                ? html`<div class="subfolder admin loose" id="loose-${folder.id}" data-drop-folder="${folder.id}" data-top="${folder.id}" data-folder-name="${folder.name}">
                     <div class="subfolder-head">
-                      <h3 class="subfolder-title">Files directly in ${folder.name}</h3>
+                      <h3 class="subfolder-title"><button type="button" class="sub-toggle" aria-expanded="true" aria-label="Fold or unfold this subfolder" title="Fold or unfold"></button>Files directly in ${folder.name}</h3>
                       <span class="subfolder-count">${plural(inFolder(folder.id).filter((f) => !f.placeholder).length, "file")}</span>
                     </div>
                     ${rows(inFolder(folder.id), folder)}
@@ -266,7 +266,7 @@ adminRoutes.get("/admin", async (c) => {
               ${subs.map(
                 (sub) => html`<div class="subfolder admin" id="${sub.id}" data-drop-folder="${sub.id}" data-top="${folder.id}" data-folder-name="${sub.name}">
                   <div class="subfolder-head">
-                    <h3 class="subfolder-title">${linkChip(sub.slug, sub.name)}${sub.name}</h3>
+                    <h3 class="subfolder-title"><button type="button" class="sub-toggle" aria-expanded="true" aria-label="Fold or unfold this subfolder" title="Fold or unfold"></button>${linkChip(sub.slug, sub.name)}${sub.name}</h3>
                     <span class="subfolder-count">${plural(inFolder(sub.id).filter((f) => !f.placeholder).length, "file")}</span>
                     <span class="subfolder-actions">
                     <button type="button" class="link-btn small" data-upload-open="up-${sub.id}">Add files</button>
