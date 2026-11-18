@@ -1451,3 +1451,64 @@ describe("request access", () => {
     expect(after.filter((m) => m.to === no)).toHaveLength(0);
   });
 });
+
+describe("Documents page: subfolder boxes and moving files", () => {
+  async function addSubfolder(parent: string) {
+    const id = uid("sub");
+    await env.DB.prepare("INSERT INTO folders (id, name, description, position, watermark, created_at, parent_id) VALUES (?, ?, '', 0, 1, ?, ?)")
+      .bind(id, `Sub ${id}`, Date.now(), parent)
+      .run();
+    return id;
+  }
+
+  it("draws each subfolder as its own box, and lets files be dragged between them", async () => {
+    const admin = await adminSession();
+    const top = await addFolder();
+    const sub = await addSubfolder(top);
+    const inSub = await addFile(sub, { name: "In the subfolder.pdf" });
+    const loose = await addFile(top, { name: "Loose in the folder.pdf" });
+    const page = await (await req("/admin", { cookie: admin })).text();
+    // One box per subfolder, each a place a file can be dropped, and each file row can be picked up.
+    expect(page).toContain(`class="subfolder admin" id="${sub}" data-drop-folder="${sub}" data-top="${top}"`);
+    expect(page).toContain(`data-file="${inSub}"`);
+    expect(page).toContain(`data-file="${loose}"`);
+    expect(page).toContain(`draggable="true"`);
+    // Files that sit directly in the folder get a box of their own, named as such, next to the subfolders.
+    expect(page).toContain("Files directly in Folder");
+    expect(page).toContain(">Options<");
+    expect(page).toContain("1 file");
+  });
+
+  it("moves a file to another folder, drops the heading it left empty, and access follows the new folder", async () => {
+    const admin = await adminSession();
+    const from = await addFolder();
+    const sub = await addSubfolder(from);
+    const to = await addFolder();
+    const file = await addFile(sub, { name: "Moves.pdf" });
+    const oldInvestor = await addInvestor({ folders: [from] });
+    const newInvestor = await addInvestor({ folders: [to] });
+
+    const res = await req(`/admin/files/${file}`, { cookie: admin, form: { action: "move", folder_id: to } });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(`/admin?m=file_moved#${to}`);
+    expect(await env.DB.prepare("SELECT folder_id FROM files WHERE id = ?").bind(file).first()).toEqual({ folder_id: to });
+    expect(await env.DB.prepare("SELECT id FROM folders WHERE id = ?").bind(sub).first()).toBeNull(); // heading left empty
+
+    expect((await req(`/d/${file}`, { cookie: await signIn(oldInvestor.email) })).status).toBe(404);
+    expect((await req(`/d/${file}`, { cookie: await signIn(newInvestor.email) })).status).toBe(200);
+    expect(await (await req("/admin?m=file_moved", { cookie: admin })).text()).toContain("Moved.");
+  });
+
+  it("ignores a move to a folder that does not exist, and a move by anyone but an admin", async () => {
+    const admin = await adminSession();
+    const top = await addFolder();
+    const file = await addFile(top);
+    const inv = await addInvestor({ folders: [top] });
+    await req(`/admin/files/${file}`, { cookie: admin, form: { action: "move", folder_id: "nope" } });
+    expect(await env.DB.prepare("SELECT folder_id FROM files WHERE id = ?").bind(file).first()).toEqual({ folder_id: top });
+
+    const other = await addFolder();
+    await req(`/admin/files/${file}`, { cookie: await signIn(inv.email), form: { action: "move", folder_id: other } });
+    expect(await env.DB.prepare("SELECT folder_id FROM files WHERE id = ?").bind(file).first()).toEqual({ folder_id: top });
+  });
+});

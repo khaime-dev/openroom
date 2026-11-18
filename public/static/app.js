@@ -224,6 +224,73 @@ document.addEventListener("change", (e) => {
   });
   document.addEventListener("dragend", () => light(null));
 
+  // Drag a file row onto another folder or subfolder to move it there. (Uploads are the "Files" drags
+  // above; this one carries its own type, so the two never mix.) Moving to a different top-level
+  // folder changes who can see the file, so that asks first.
+  const ROW = "application/x-openroom-file";
+  let dragging = null;
+  let over = null;
+  const lightMove = (zone) => {
+    if (over === zone) return;
+    if (over) over.classList.remove("move-over");
+    over = zone;
+    if (over) over.classList.add("move-over");
+  };
+  const moveZone = (t) => {
+    const zone = t instanceof Element ? t.closest("[data-drop-folder]") : null;
+    return zone && dragging && zone.dataset.dropFolder !== dragging.folder ? zone : null;
+  };
+  document.addEventListener("dragstart", (e) => {
+    const row = e.target instanceof Element ? e.target.closest("li.file-row[data-file]") : null;
+    if (!row || !e.dataTransfer) return;
+    dragging = { id: row.dataset.file, name: row.dataset.name, folder: row.dataset.folder, top: row.dataset.top };
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData(ROW, dragging.id);
+    e.dataTransfer.setData("text/plain", dragging.name || "");
+    row.classList.add("dragging");
+  });
+  document.addEventListener("dragover", (e) => {
+    if (!dragging || !e.dataTransfer || !Array.from(e.dataTransfer.types).includes(ROW)) return;
+    const zone = moveZone(e.target);
+    if (zone) e.preventDefault();
+    e.dataTransfer.dropEffect = zone ? "move" : "none";
+    lightMove(zone);
+  });
+  document.addEventListener("drop", (e) => {
+    if (!dragging || !e.dataTransfer || !Array.from(e.dataTransfer.types).includes(ROW)) return;
+    const zone = moveZone(e.target);
+    const file = dragging;
+    lightMove(null);
+    if (!zone) return;
+    e.preventDefault();
+    const go = () => {
+      const form = document.createElement("form");
+      form.method = "post";
+      form.action = "/admin/files/" + encodeURIComponent(file.id);
+      for (const [name, value] of [["action", "move"], ["folder_id", zone.dataset.dropFolder]]) {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = name;
+        input.value = value;
+        form.append(input);
+      }
+      document.body.append(form);
+      form.submit();
+    };
+    if (zone.dataset.top === file.top) return go();
+    const place = zone.dataset.folderName || "that folder";
+    askFirst(
+      `Move ${file.name} to ${place}? Investors with access to that folder will be able to see it (if it is Visible), and investors who only had access to where it was will no longer see it.`,
+      { textContent: "Move" }, // the confirm button reads "Move", not "Continue"
+      go,
+    );
+  });
+  document.addEventListener("dragend", () => {
+    document.querySelectorAll(".dragging").forEach((el) => el.classList.remove("dragging"));
+    lightMove(null);
+    dragging = null;
+  });
+
   // The upload window and the Edit slider: opened by their button; closed by Cancel, the cross, Escape,
   // or a click on the dimmed page around them. (Both press and release must be outside, so selecting
   // text in a field and letting go outside does not close it.)

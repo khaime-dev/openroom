@@ -30,6 +30,7 @@ import { availableUpdate } from "../updates";
 import { VERSION } from "../version";
 
 export const adminRoutes = new Hono<AppEnv>();
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const MAX_UPLOAD = 50 * 1024 * 1024;
 
 const adminOnly: MiddlewareHandler<AppEnv> = async (c, next) => {
@@ -57,6 +58,7 @@ const MESSAGES: Record<string, [kind: "ok" | "error", text: string]> = {
   uploaded: ["ok", "Upload finished."],
   upload_none: ["error", "Choose at least one file."],
   file_saved: ["ok", "File saved."],
+  file_moved: ["ok", "Moved."],
   file_deleted: ["ok", "File deleted."],
   slug_saved: ["ok", "Link saved. Use the copy icon next to the name to share it."],
   slug_cleared: ["ok", "Link removed."],
@@ -247,16 +249,25 @@ adminRoutes.get("/admin", async (c) => {
                 <span class="tag ${people.length ? "green" : "grey"}" title="${people.map((p) => p.name || p.email).join(", ")}">${shared}</span>
               </div>
             </summary>
-            <div class="folder-body">
-              ${inFolder(folder.id).length
-                ? rows(inFolder(folder.id), folder)
-                : subs.length
-                  ? ""
-                  : html`<p class="muted small empty">No files yet. Upload the first one below.</p>`}
+            <div class="folder-body" data-drop-folder="${folder.id}" data-top="${folder.id}" data-folder-name="${folder.name}">
+              ${inFolder(folder.id).length && subs.length
+                ? html`<div class="subfolder admin loose" data-drop-folder="${folder.id}" data-top="${folder.id}" data-folder-name="${folder.name}">
+                    <div class="subfolder-head">
+                      <h3 class="subfolder-title">Files directly in ${folder.name}</h3>
+                      <span class="subfolder-count">${plural(inFolder(folder.id).filter((f) => !f.placeholder).length, "file")}</span>
+                    </div>
+                    ${rows(inFolder(folder.id), folder)}
+                  </div>`
+                : inFolder(folder.id).length
+                  ? rows(inFolder(folder.id), folder)
+                  : subs.length
+                    ? ""
+                    : html`<p class="muted small empty">No files yet. Upload the first one below.</p>`}
               ${subs.map(
-                (sub) => html`<div class="subfolder admin" id="${sub.id}">
+                (sub) => html`<div class="subfolder admin" id="${sub.id}" data-drop-folder="${sub.id}" data-top="${folder.id}" data-folder-name="${sub.name}">
                   <div class="subfolder-head">
                     <h3 class="subfolder-title">${linkChip(sub.slug, sub.name)}${sub.name}</h3>
+                    <span class="subfolder-count">${plural(inFolder(sub.id).filter((f) => !f.placeholder).length, "file")}</span>
                     <span class="subfolder-actions">
                     <button type="button" class="link-btn small" data-upload-open="up-${sub.id}">Add files</button>
                     <dialog class="upload-dialog" id="up-${sub.id}" aria-label="Add files to ${sub.name}">
@@ -268,7 +279,7 @@ adminRoutes.get("/admin", async (c) => {
                       </form>
                     </dialog>
                     <details class="menu">
-                      <summary class="link-btn small">Subfolder</summary>
+                      <summary class="link-btn small">Options</summary>
                       <div class="menu-body stack">
                         <form method="post" action="/admin/folders/${sub.id}" class="inline-form">
                           <input name="name" value="${sub.name}" required maxlength="80" aria-label="Subfolder name">
@@ -350,7 +361,7 @@ function fileRows(list: FileRow[], folder: Folder, allFolders: Folder[], statsBy
       const s = statsById.get(file.id);
       if (file.placeholder) {
         // A template placeholder: the one thing to do is upload the real document over it.
-        return html`<li class="file-row placeholder-row">
+        return html`<li class="file-row placeholder-row" draggable="true" data-file="${file.id}" data-name="${file.name}" data-folder="${folder.id}" data-top="${folder.parent_id ?? folder.id}">
           <span class="kind kind-${fileKind(file.content_type, file.name).toLowerCase()}">${fileKind(file.content_type, file.name)}</span>
           <span class="file-main">
             <span class="file-name">${file.name}</span>
@@ -373,7 +384,7 @@ function fileRows(list: FileRow[], folder: Folder, allFolders: Folder[], statsBy
         </li>`;
       }
       const hiddenByType = file.published === 1 && !visibleToInvestor(file);
-      return html`<li class="file-row">
+      return html`<li class="file-row" draggable="true" data-file="${file.id}" data-name="${file.name}" data-folder="${folder.id}" data-top="${folder.parent_id ?? folder.id}">
         <span class="kind kind-${fileKind(file.content_type, file.name).toLowerCase()}">${fileKind(file.content_type, file.name)}</span>
         <span class="file-main">
           <span class="file-title">${linkChip(file.slug, file.name)}<a class="file-name" href="/admin/preview/f/${file.id}">${file.name}</a></span>
@@ -687,7 +698,7 @@ adminRoutes.post("/admin/files/:id", async (c) => {
       const target = await c.env.DB.prepare("SELECT id FROM folders WHERE id = ?").bind(str(form.folder_id)).first();
       if (target) await c.env.DB.prepare("UPDATE files SET folder_id = ? WHERE id = ?").bind(target.id, file.id).run();
       const shown = target && target.id !== file.folder_id ? await dropEmptyHeading(c, file.folder_id) : file.folder_id;
-      return c.redirect(`/admin?m=file_saved#${target?.id ?? shown}`, 303);
+      return c.redirect(`/admin?m=file_moved#${target?.id ?? shown}`, 303);
     }
   }
   if (form.back === "file") return c.redirect(`/admin/files/${file.id}?m=file_saved`, 303);
