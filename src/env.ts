@@ -65,6 +65,8 @@ export type FileRow = {
   slug: string | null; // optional custom link: /d/<slug>
   orientation: "portrait" | "landscape" | null;
   placeholder: number; // 1 = a template placeholder: never visible until replaced
+  /** Place in its folder after being dragged into an order; null = never placed (listed by name, after placed files). */
+  position: number | null;
   uploaded_at: number;
   updated_at: number;
 };

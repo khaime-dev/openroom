@@ -1451,3 +1451,165 @@ describe("request access", () => {
     expect(after.filter((m) => m.to === no)).toHaveLength(0);
   });
 });
+
+describe("Documents page: subfolder boxes and moving files", () => {
+  async function addSubfolder(parent: string) {
+    const id = uid("sub");
+    await env.DB.prepare("INSERT INTO folders (id, name, description, position, watermark, created_at, parent_id) VALUES (?, ?, '', 0, 1, ?, ?)")
+      .bind(id, `Sub ${id}`, Date.now(), parent)
+      .run();
+    return id;
+  }
+
+  it("draws each subfolder as its own box, and lets files be dragged between them", async () => {
+    const admin = await adminSession();
+    const top = await addFolder();
+    const sub = await addSubfolder(top);
+    const inSub = await addFile(sub, { name: "In the subfolder.pdf" });
+    const loose = await addFile(top, { name: "Loose in the folder.pdf" });
+    const page = await (await req("/admin", { cookie: admin })).text();
+    // One box per subfolder, each a place a file can be dropped, and each file row can be picked up.
+    expect(page).toContain(`class="subfolder admin" id="${sub}" data-drop-folder="${sub}" data-top="${top}"`);
+    expect(page).toContain(`data-file="${inSub}"`);
+    expect(page).toContain(`data-file="${loose}"`);
+    expect(page).toContain(`draggable="true"`);
+    // Files that sit directly in the folder are a plain list under its title, not a box with a heading, and
+    // that list is a place a file can be dropped too.
+    expect(page).toContain(`class="loose-files" data-drop-folder="${top}"`);
+    expect(page).not.toContain("Files directly in");
+    expect(page).toContain(">Options<");
+    expect(page).toContain("1 file");
+    // Each subfolder box can be folded to its title bar.
+    expect(page.match(/class="sub-toggle"/g)?.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("moves a file to another folder, drops the heading it left empty, and access follows the new folder", async () => {
+    const admin = await adminSession();
+    const from = await addFolder();
+    const sub = await addSubfolder(from);
+    const to = await addFolder();
+    const file = await addFile(sub, { name: "Moves.pdf" });
+    const oldInvestor = await addInvestor({ folders: [from] });
+    const newInvestor = await addInvestor({ folders: [to] });
+
+    const res = await req(`/admin/files/${file}`, { cookie: admin, form: { action: "move", folder_id: to } });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(`/admin?m=file_moved#${to}`);
+    expect(await env.DB.prepare("SELECT folder_id FROM files WHERE id = ?").bind(file).first()).toEqual({ folder_id: to });
+    expect(await env.DB.prepare("SELECT id FROM folders WHERE id = ?").bind(sub).first()).toBeNull(); // heading left empty
+
+    expect((await req(`/d/${file}`, { cookie: await signIn(oldInvestor.email) })).status).toBe(404);
+    expect((await req(`/d/${file}`, { cookie: await signIn(newInvestor.email) })).status).toBe(200);
+    expect(await (await req("/admin?m=file_moved", { cookie: admin })).text()).toContain("Moved.");
+  });
+
+  it("ignores a move to a folder that does not exist, and a move by anyone but an admin", async () => {
+    const admin = await adminSession();
+    const top = await addFolder();
+    const file = await addFile(top);
+    const inv = await addInvestor({ folders: [top] });
+    await req(`/admin/files/${file}`, { cookie: admin, form: { action: "move", folder_id: "nope" } });
+    expect(await env.DB.prepare("SELECT folder_id FROM files WHERE id = ?").bind(file).first()).toEqual({ folder_id: top });
+
+    const other = await addFolder();
+    await req(`/admin/files/${file}`, { cookie: await signIn(inv.email), form: { action: "move", folder_id: other } });
+    expect(await env.DB.prepare("SELECT folder_id FROM files WHERE id = ?").bind(file).first()).toEqual({ folder_id: top });
+  });
+});
+
+describe("putting files and folders in order", () => {
+  async function addSub(parent: string) {
+    const id = uid("sub");
+    await env.DB.prepare("INSERT INTO folders (id, name, description, position, watermark, created_at, parent_id) VALUES (?, ?, '', 0, 1, ?, ?)")
+      .bind(id, `Sub ${id}`, Date.now(), parent)
+      .run();
+    return id;
+  }
+  const filesIn = async (folder: string) =>
+    (await env.DB.prepare("SELECT name FROM files WHERE folder_id = ? ORDER BY COALESCE(position, 2147483647), name COLLATE NOCASE").bind(folder).all<{ name: string }>()).results.map((r) => r.name);
+  const place = (admin: string, file: string, form: Record<string, string>) => req(`/admin/files/${file}/place`, { cookie: admin, form });
+
+  it("lists files by name until they are put in an order, then in that order, in the admin view and for investors", async () => {
+    const admin = await adminSession();
+    const top = await addFolder();
+    const a = await addFile(top, { name: "Alpha.pdf" });
+    const b = await addFile(top, { name: "Bravo.pdf" });
+    const c = await addFile(top, { name: "Charlie.pdf" });
+    expect(await filesIn(top)).toEqual(["Alpha.pdf", "Bravo.pdf", "Charlie.pdf"]);
+
+    // Charlie goes in front of Alpha.
+    const res = await place(admin, c, { before: a });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(`/admin?m=file_moved#${top}`);
+    expect(await filesIn(top)).toEqual(["Charlie.pdf", "Alpha.pdf", "Bravo.pdf"]);
+    // Alpha to the end: no "before", or one that is not in the folder.
+    await place(admin, a, {});
+    await place(admin, b, { before: "not-a-file" });
+    expect(await filesIn(top)).toEqual(["Charlie.pdf", "Alpha.pdf", "Bravo.pdf"]);
+
+    // A new upload that has not been placed comes after the placed ones, even if its name sorts first.
+    await addFile(top, { name: "Aardvark.pdf" });
+    expect(await filesIn(top)).toEqual(["Charlie.pdf", "Alpha.pdf", "Bravo.pdf", "Aardvark.pdf"]);
+
+    const inv = await addInvestor({ folders: [top] });
+    const html = await (await req("/room", { cookie: await signIn(inv.email) })).text();
+    const at = (n: string) => html.indexOf(n);
+    expect(at("Charlie.pdf")).toBeGreaterThan(-1);
+    expect(at("Charlie.pdf")).toBeLessThan(at("Alpha.pdf"));
+    expect(at("Alpha.pdf")).toBeLessThan(at("Bravo.pdf"));
+    expect(at("Bravo.pdf")).toBeLessThan(at("Aardvark.pdf"));
+    const adminHtml = await (await req("/admin", { cookie: admin })).text();
+    expect(adminHtml.indexOf("Charlie.pdf")).toBeLessThan(adminHtml.indexOf("Alpha.pdf"));
+  });
+
+  it("puts a file into another folder at a place, drops a heading it empties, and ignores nonsense", async () => {
+    const admin = await adminSession();
+    const from = await addFolder();
+    const sub = await addSub(from);
+    const to = await addFolder();
+    const mover = await addFile(sub, { name: "Mover.pdf" });
+    const x = await addFile(to, { name: "X.pdf" });
+    await addFile(to, { name: "Y.pdf" });
+    const res = await place(admin, mover, { folder_id: to, before: x });
+    expect(res.headers.get("location")).toBe(`/admin?m=file_moved#${to}`);
+    expect(await filesIn(to)).toEqual(["Mover.pdf", "X.pdf", "Y.pdf"]);
+    expect(await env.DB.prepare("SELECT id FROM folders WHERE id = ?").bind(sub).first()).toBeNull();
+
+    // A folder that does not exist leaves the file alone; so does someone who is not an admin.
+    await place(admin, mover, { folder_id: "nope" });
+    const inv = await addInvestor({ folders: [to] });
+    await place(await signIn(inv.email), mover, { folder_id: from });
+    expect(await filesIn(to)).toEqual(["Mover.pdf", "X.pdf", "Y.pdf"]);
+  });
+
+  it("puts folders and subfolders in order among their siblings, and investors see that order", async () => {
+    const admin = await adminSession();
+    const one = await addFolder();
+    const two = await addFolder();
+    const three = await addFolder();
+    const siblings = async (parent: string | null) =>
+      (await env.DB.prepare("SELECT id FROM folders WHERE parent_id IS ? AND id IN (?, ?, ?) ORDER BY position, name COLLATE NOCASE").bind(parent, one, two, three).all<{ id: string }>()).results.map((r) => r.id);
+    await env.DB.prepare("UPDATE folders SET position = 0 WHERE id IN (?, ?, ?)").bind(one, two, three).run();
+    await req(`/admin/folders/${three}/place`, { cookie: admin, form: { before: one } });
+    expect(await siblings(null)).toEqual([three, one, two]);
+    await req(`/admin/folders/${three}/place`, { cookie: admin, form: {} }); // no "before": last
+    expect(await siblings(null)).toEqual([one, two, three]);
+
+    // Subfolders move among the ones in the same folder, and cannot be put "before" a stranger.
+    const s1 = await addSub(one);
+    const s2 = await addSub(one);
+    await addFile(s1, { name: "In s1.pdf" });
+    await addFile(s2, { name: "In s2.pdf" });
+    await req(`/admin/folders/${s2}/place`, { cookie: admin, form: { before: s1 } });
+    const inv = await addInvestor({ folders: [one] });
+    const html = await (await req("/room", { cookie: await signIn(inv.email) })).text();
+    expect(html.indexOf("In s2.pdf")).toBeLessThan(html.indexOf("In s1.pdf"));
+    await req(`/admin/folders/${s2}/place`, { cookie: admin, form: { before: two } }); // not a sibling: last
+    const order = (await env.DB.prepare("SELECT id FROM folders WHERE parent_id = ? ORDER BY position, name COLLATE NOCASE").bind(one).all<{ id: string }>()).results.map((r) => r.id);
+    expect(order).toEqual([s1, s2]);
+
+    // Only an admin can do it.
+    await req(`/admin/folders/${three}/place`, { cookie: await signIn(inv.email), form: { before: one } });
+    expect(await siblings(null)).toEqual([one, two, three]);
+  });
+});
