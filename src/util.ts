@@ -178,3 +178,6 @@ export function contentDisposition(kind: "inline" | "attachment", filename: stri
   const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
   return `${kind}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
+
+/** The order files are listed in: placed ones (by position) first, then the rest by name. `alias` is the table alias, like "fi.". */
+export const fileOrder = (alias = "") => `COALESCE(${alias}position, 2147483647), ${alias}name COLLATE NOCASE`;

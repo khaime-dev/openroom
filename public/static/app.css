@@ -360,14 +360,14 @@ details.more input { width: 100%; margin: 4px 0 6px; }
 .file-row[draggable=true] { cursor: grab; }
 .file-row[draggable=true]:hover { background: #fafbfd; }
 /* While a file is dragged: it leaves its place, and a gap opens in the list right where the pointer is. */
-.file-row.dragging { display: none; }
+.file-row.dragging, details.folder.dragging, .subfolder.admin.dragging { display: none; }
+.drop-gap.folder-gap { height: 64px; margin: 14px 0; border: 2px dashed var(--blue); border-radius: 14px; background: #eef4ff; animation: folder-gap-open .14s ease-out; }
+.drop-gap.folder-gap.is-sub { height: 48px; margin: 14px 0 0 20px; }
+@keyframes folder-gap-open { from { height: 0; margin-top: 0; margin-bottom: 0; opacity: 0; } to { opacity: 1; } }
 .files li.drop-gap { list-style: none; height: 60px; margin: 6px 0; border: 2px dashed var(--blue); border-radius: 12px; background: #eef4ff; animation: gap-open .14s ease-out; }
 @keyframes gap-open { from { height: 0; margin: 0; opacity: 0; } to { height: 60px; margin: 6px 0; opacity: 1; } }
 .drag-ghost { position: fixed; top: -200px; left: -200px; max-width: 280px; padding: 10px 14px; border: 2px solid var(--blue); border-radius: 12px; background: #fff; color: var(--navy); font: 600 14px/1.3 inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 10px 28px rgba(11, 27, 63, .25); }
-/* The file that just moved flashes green, then settles. */
-.just-moved { animation: moved-flash 1.8s ease-out; }
-@keyframes moved-flash { 0% { background-color: #d5f3e1; box-shadow: 0 0 0 3px #7fd6a4 inset; } 70% { background-color: #d5f3e1; box-shadow: 0 0 0 3px #7fd6a4 inset; } 100% { background-color: transparent; box-shadow: 0 0 0 3px transparent inset; } }
-@media (prefers-reduced-motion: reduce) { .drop-gap, .just-moved { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .drop-gap, .drop-gap.folder-gap { animation: none; } }
 .subfolder .empty { padding: 4px 16px 8px; margin: 0; }
 .sub-upload { padding: 4px 16px 0; }
 .placeholder-row { background: #fffbeb; }
