@@ -1473,13 +1473,14 @@ describe("Documents page: subfolder boxes and moving files", () => {
     expect(page).toContain(`data-file="${inSub}"`);
     expect(page).toContain(`data-file="${loose}"`);
     expect(page).toContain(`draggable="true"`);
-    // Files that sit directly in the folder get a box of their own, named as such, next to the subfolders.
-    expect(page).toContain("Files directly in Folder");
+    // Files that sit directly in the folder are a plain list under its title, not a box with a heading, and
+    // that list is a place a file can be dropped too.
+    expect(page).toContain(`class="loose-files" data-drop-folder="${top}"`);
+    expect(page).not.toContain("Files directly in");
     expect(page).toContain(">Options<");
-    // Each box can be folded to its title bar, the files directly in the folder too.
-    expect(page.match(/class="sub-toggle"/g)?.length).toBeGreaterThanOrEqual(2); // other tests leave folders in the room too
-    expect(page).toContain(`id="loose-${top}"`);
     expect(page).toContain("1 file");
+    // Each subfolder box can be folded to its title bar.
+    expect(page.match(/class="sub-toggle"/g)?.length).toBeGreaterThanOrEqual(1);
   });
 
   it("moves a file to another folder, drops the heading it left empty, and access follows the new folder", async () => {

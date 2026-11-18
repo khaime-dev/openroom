@@ -252,13 +252,7 @@ adminRoutes.get("/admin", async (c) => {
             </summary>
             <div class="folder-body" data-drop-folder="${folder.id}" data-top="${folder.id}" data-folder-name="${folder.name}">
               ${inFolder(folder.id).length && subs.length
-                ? html`<div class="subfolder admin loose" id="loose-${folder.id}" data-drop-folder="${folder.id}" data-top="${folder.id}" data-folder-name="${folder.name}">
-                    <div class="subfolder-head">
-                      <h3 class="subfolder-title"><button type="button" class="sub-toggle" aria-expanded="true" aria-label="Fold or unfold this subfolder" title="Fold or unfold"></button>Files directly in ${folder.name}</h3>
-                      <span class="subfolder-count">${plural(inFolder(folder.id).filter((f) => !f.placeholder).length, "file")}</span>
-                    </div>
-                    ${rows(inFolder(folder.id), folder)}
-                  </div>`
+                ? html`<div class="loose-files" data-drop-folder="${folder.id}" data-top="${folder.id}" data-folder-name="${folder.name}">${rows(inFolder(folder.id), folder)}</div>`
                 : inFolder(folder.id).length
                   ? rows(inFolder(folder.id), folder)
                   : subs.length

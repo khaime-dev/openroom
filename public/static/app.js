@@ -246,19 +246,22 @@ document.addEventListener("change", (e) => {
   folderGap.setAttribute("aria-hidden", "true");
 
   const hasSubBoxes = (body) => !!body.querySelector(":scope > .subfolder");
-  // Where a file dropped at this spot would go: a subfolder box, or a folder's own area. A folder that has
-  // subfolders only offers its own area down by its Upload row, so the gap never opens away from the pointer.
+  // Where a file dropped at this spot would go: a subfolder box, or the folder's own level (see below).
   const zoneAt = (t) => {
     if (!(t instanceof Element)) return null;
-    // Over an open folder's title bar: put it directly in that folder.
+    // Over an open folder's title bar: put it directly in that folder, at the top of its files.
     const head = t.closest("summary.folder-head");
-    if (head && head.parentElement.open) {
-      const body = head.parentElement.querySelector(":scope > .folder-body");
-      return (body && (body.querySelector(":scope > .subfolder.loose") || (hasSubBoxes(body) ? null : body))) || null;
-    }
+    if (head && head.parentElement.open) return looseFor(head.parentElement);
     const z = t.closest("[data-drop-folder]");
     if (!z) return null;
-    if (z.classList.contains("folder-body") && hasSubBoxes(z) && !t.closest(".folder-foot")) return null;
+    // Anywhere in a folder that is not inside one of its subfolder boxes (the strip between boxes, the Upload
+    // row, the space around) is the folder's own level: the gap opens at the top of its files. Between two
+    // subfolder boxes it stays with the box you came from, so the gap does not jump back and forth.
+    if (z.classList.contains("folder-body")) {
+      if (zone && zone !== z && z.contains(zone) && zone.classList.contains("subfolder") && !t.closest(".folder-foot")) return zone;
+      const d = z.closest("details.folder");
+      return d ? looseFor(d) : z;
+    }
     return z;
   };
   const listOf = (z, make) => {
@@ -272,46 +275,29 @@ document.addEventListener("change", (e) => {
     }
     return list;
   };
-  // A folder that has subfolders but no files of its own has nowhere to drop a file "directly in" it. While a
-  // file is dragged, each such folder shows an empty "Files directly in ..." box at its top.
-  const addLooseTargets = () => {
-    for (const body of document.querySelectorAll("details.folder > .folder-body[data-drop-folder]")) {
-      if (!hasSubBoxes(body) || body.querySelector(":scope > .subfolder.loose")) continue;
-      const box = document.createElement("div");
-      box.className = "subfolder admin loose temp-loose";
+  // A folder's own files are a plain list right under its title bar. A folder that has subfolders but no
+  // files of its own gets an empty one while you hover its title bar with a file, so the gap opens there.
+  const looseFor = (details) => {
+    const body = details.querySelector(":scope > .folder-body");
+    if (!body) return null;
+    if (!hasSubBoxes(body)) return body; // no subfolders: the folder's own list is the whole body
+    let box = body.querySelector(":scope > .loose-files");
+    if (!box) {
+      box = document.createElement("div");
+      box.className = "loose-files temp-loose";
       box.dataset.dropFolder = body.dataset.dropFolder;
       box.dataset.top = body.dataset.top;
       box.dataset.folderName = body.dataset.folderName;
-      const head = document.createElement("div");
-      head.className = "subfolder-head";
-      const title = document.createElement("h3");
-      title.className = "subfolder-title";
-      title.textContent = "Files directly in " + (body.dataset.folderName || "this folder");
-      const count = document.createElement("span");
-      count.className = "subfolder-count";
-      count.textContent = "0 files";
-      head.append(title, count);
-      box.append(head);
       body.prepend(box);
     }
+    return box;
   };
-  // A temporary box that nothing was dropped into goes away; one that got a file stays, as a real box.
-  const settleLooseTargets = () => {
+  // A temporary list that nothing was dropped into goes away; one that got a file stays, as the folder's list.
+  const settleLooseTargets = (keep) => {
     for (const box of document.querySelectorAll(".temp-loose")) {
-      if (!box.querySelector("li.file-row")) {
-        box.remove();
-        continue;
-      }
-      box.classList.remove("temp-loose");
-      box.id = "loose-" + box.dataset.dropFolder;
-      const title = box.querySelector(".subfolder-title");
-      const toggle = document.createElement("button");
-      toggle.type = "button";
-      toggle.className = "sub-toggle";
-      toggle.setAttribute("aria-expanded", "true");
-      toggle.setAttribute("aria-label", "Fold or unfold this subfolder");
-      toggle.title = "Fold or unfold";
-      if (title) title.prepend(toggle);
+      if (box === keep) continue;
+      if (!box.querySelector("li.file-row")) box.remove();
+      else box.classList.remove("temp-loose");
     }
   };
   const closeGaps = () => {
@@ -320,7 +306,7 @@ document.addEventListener("change", (e) => {
     // A list made only to hold the gap goes away with it.
     document.querySelectorAll("ul.files.admin:empty").forEach((u) => u.remove());
   };
-  const isSibling = (el, c) => c !== el && (el.matches("details.folder") ? c.matches("details.folder") : c.matches(".subfolder.admin:not(.loose)"));
+  const isSibling = (el, c) => c !== el && (el.matches("details.folder") ? c.matches("details.folder") : c.matches(".subfolder.admin"));
   const siblingsOf = (el) => [...el.parentElement.children].filter((c) => isSibling(el, c));
   const firstBelow = (items, y) =>
     items.find((r) => {
@@ -397,6 +383,8 @@ document.addEventListener("change", (e) => {
       if (!box.querySelector("li.file-row")) return box.remove();
       const c = box.querySelector(":scope > .subfolder-head .subfolder-count");
       if (c) c.textContent = plural(realRows(box).length, "file");
+    } else if (box.classList.contains("loose-files")) {
+      if (!box.querySelector("li.file-row")) box.remove();
     } else if (box.classList.contains("folder-body") && !box.querySelector(":scope > .subfolder, li.file-row") && !box.querySelector(":scope > .empty")) {
       const p = document.createElement("p");
       p.className = "muted small empty";
@@ -435,7 +423,7 @@ document.addEventListener("change", (e) => {
       e.dataTransfer.setData(ROW, dragging.id);
       name = dragging.name || "File";
     } else {
-      const head = e.target.closest("summary.folder-head, .subfolder.admin[id]:not(.loose) > .subfolder-head");
+      const head = e.target.closest("summary.folder-head, .subfolder.admin[id] > .subfolder-head");
       const el = head && head.closest("details.folder, .subfolder.admin");
       if (!head || !el || !el.id) return;
       const body = el.matches("details.folder") ? el.querySelector(":scope > .folder-body") : el;
@@ -456,11 +444,7 @@ document.addEventListener("change", (e) => {
     setTimeout(() => ghost.remove(), 0);
     // It leaves its place a moment later (changing the page at once can cancel the drag).
     const el = dragging.el;
-    setTimeout(() => {
-      if (!dragging) return;
-      el.classList.add("dragging");
-      if (dragging.kind === "file") addLooseTargets();
-    }, 0);
+    setTimeout(() => dragging && el.classList.add("dragging"), 0);
   });
   document.addEventListener("dragover", (e) => {
     if (!dragging || !e.dataTransfer) return;
@@ -468,6 +452,7 @@ document.addEventListener("change", (e) => {
     const t = e.target instanceof Element ? e.target : null;
     if (dragging.kind === "file" && types.includes(ROW)) {
       zone = zoneAt(t);
+      settleLooseTargets(zone);
       const closedFolder = t && t.closest("details.folder:not([open])");
       springOpen(closedFolder || (zone && zone.classList.contains("is-collapsed") ? zone : null));
       if (!zone) {
